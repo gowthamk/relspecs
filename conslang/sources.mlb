@@ -1,0 +1,30 @@
+local 
+	$(SML_LIB)/smlnj-lib/Util/smlnj-lib.mlb
+	../../lib/mlton/sources.mlb
+	../atoms/sources.mlb
+	
+	../languagestruct/sources.mlb
+	
+	../common/sources.mlb
+	../qualifierparser/sources.mlb
+	../loopinvariantparser/sources.mlb
+	
+	predicate.sml
+	qualifier.sml
+	relpredicate.sml
+	relqualifier.sml
+	invariant.sml
+in
+	signature PREDICATE
+	structure Predicate
+	signature REL_PREDICATE
+	structure RelPredicate
+	(* functor Predicate *)
+	signature REL_QUALIFIER
+	structure RelQualifier
+	signature QUALIFIER
+	structure Qualifier
+	(* functor Qualifier *)
+	signature INVARIANT
+	structure Invariant
+end

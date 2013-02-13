@@ -1,0 +1,16 @@
+Note:
+
+The file builtin.sml, heap.sml, lightenv.sml, pattern.sml is exactly same to that of liquid type implementation
+
+constraint.sml is updated. The verification task is moved to vc.sml. We will not invoke theorem prover for each
+constraint; instead, these constraints will be transform to a verification condition in vc.sml and given to
+theorem prover for verification
+
+constraintgen.sml scans sml file only in sytax form and generates all the liquid type rules.
+
+modelcheck.sml receives the above rules and organizes them by their belonging of bindings. modelcheck maintains
+a worklist and verify each function modularly by giveing each binding's rules to vc.sml.
+
+vc.sml recevies the binding's rules and obtain verification condition from it. Theorem prover call is embeded
+in vc.
+ 

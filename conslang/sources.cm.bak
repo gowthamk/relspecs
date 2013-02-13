@@ -1,0 +1,26 @@
+Group
+
+signature PREDICATE
+structure Predicate
+(* functor Predicate *)
+signature QUALIFIER
+structure Qualifier
+(* functor Qualifier *)
+signature INVARIANT
+structure Invariant
+
+is
+
+$(SML_LIB)/smlnj-lib/Util/smlnj-lib.cm
+../../lib/mlton/sources.cm
+../atoms/sources.cm
+
+../languagestruct/sources.cm
+
+../common/sources.cm
+../qualifierparser/sources.cm
+../loopinvariantparser/sources.cm
+
+predicate.sml
+qualifier.sml
+invariant.sml

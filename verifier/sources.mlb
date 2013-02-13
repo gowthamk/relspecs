@@ -1,0 +1,52 @@
+local
+	$(SML_LIB)/basis/basis.mlb
+	$(SML_LIB)/basis/mlton.mlb
+	$(SML_LIB)/basis/c-types.mlb
+	$(SML_LIB)/smlnj-lib/Util/smlnj-lib.mlb
+	../../lib/mlton/sources.mlb
+	
+	
+	../control/sources.mlb
+	../atoms/sources.mlb
+	../core-ml/sources.mlb
+	../control/sources.mlb
+	../common/sources.mlb
+	../conslang/sources.mlb
+	../languagestruct/sources.mlb
+	../qualifierparser/sources.mlb
+	../conslang/sources.mlb
+	../theoremprover/prover.mlb
+	../loopinvariantparser/sources.mlb
+	
+	heap.sml
+	pattern.sml
+	frame.sml
+	relframe.sml
+	lightenv.sml
+	rellightenv.sml
+	builtin.sml
+  relbuiltin.sml
+	constraint.sml
+  relconstraint.sml
+	constraintgen.sml
+	ann "allowFFI true" in	
+		testrun.sml
+	end
+	backwalker.sml
+	
+	vc.sml
+	modelcheck.sml
+	
+	
+in
+	signature LIGHTENV
+	structure Lightenv
+	signature REL_LIGHTENV
+	structure RelLightenv
+	signature BUILTIN
+	structure Builtin
+	signature REL_BUILTIN
+	structure RelBuiltin
+	(*signature CONSTRAINTGEN*)
+	structure Modelcheck
+end
