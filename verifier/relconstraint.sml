@@ -30,11 +30,13 @@ structure RelConstraint =
 		type subref_id = int 	                         
 		
 		type guard_t = (Var.t * int * bool) list
+
+    type env = Le.t * RLe.t * guard_t 
 		
 		datatype frame_constraint =
         (* Gamma;guard |-  RF.t => RF.t*)
-		    RSubFrame of RLe.t * guard_t * RF.t * RF.t
-		  | RWFFrame of RLe.t * RF.t
+		    RSubFrame of env * RF.t * RF.t
+		  | RWFFrame of env * RF.t
 		
 		datatype labeled_constraint = lc of {
 		  lc_cstr: frame_constraint,
@@ -66,13 +68,6 @@ structure RelConstraint =
 		fun fresh_fc_id () = 
 		  let val r = ref 0 
 		  in fn () => incr r; SOME (!r) end
-		
-		(* Unique variable to qualify when testing sat, applicability of qualifiers...
-		 * this is passed into the solver *) 
-		val qual_test_pvar = Var.fromString ("AA")
-		val qual_test_rvar = Var.fromString ("RR")
-		val qual_test_pexpr = P.PVar qual_test_pvar
-		val qual_test_rexpr = RP.RSet [qual_test_rvar]
 		
 		(* If there is no pending substitution then return true *)
 		fun solution_map s k = 

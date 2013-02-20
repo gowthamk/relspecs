@@ -198,29 +198,7 @@ structure Constraintgen (*: CONSTRAINTGEN *) =
                   (* Why dummy?  *)
                   Predicate.PVar (Var.mk_ident "dummy")
 		  				end
-		  			| (Exp.Con (c, targs), _) => 
-              let
-                val expty = Type.toMyType (Exp.ty e)
-                val _ = print ("Type of args of "^(Con.toString c)^" : "^
-                        (CoreML.visitType (Exp.ty e2))^"\n")
-                val _ = print ("Whereas type of e1 e2 is "^(CoreML.visitType (Exp.ty e))^"\n")
-                val _ = print ("And targs are \n")
-                val _ = Vector.toListMap (targs,(fn t => (print ((CoreML.visitType t)^"\n"))))
-                fun getArgTypes e2 = (case Type.toMyType(Exp.ty e2) of
-                    Ttuple tdl => List.map (tdl, 
-                      (fn tf => (case tf of (Tfield(_,t)) => t|_=>(print "Non-tfield inside tconstr\n";assertfalse()))))
-                  | any => [any]
-                )
-                val tdl = getArgTypes e2
-                val ilist = List.foldi(tdl,[],
-                  (fn (i,t,l) => if(Type_desc.sametype(t,expty))then 
-                      (l@[i]) 
-                    else (l)))
-                val _ = print ("For expression : "^(CoreML.visitExp e2)^", indexes : \n")
-                val _ = List.fold(ilist,(),(fn(i,_)=>(print(Int.toString(i)))))
-              in
-                 Predicate.FunApp (Con.toString c, [expression_to_pexpr e2])
-              end
+		  			| (Exp.Con (c, targs), _) => Predicate.FunApp (Con.toString c, [expression_to_pexpr e2])
 		  			| _ => 
 		  				let val name = getFunctionAppName e
 		  				in
@@ -302,44 +280,42 @@ structure Constraintgen (*: CONSTRAINTGEN *) =
 		val sumdatatypeTable : (Tycon.t, (Con.t * Type_desc.type_desc list) list) hash_table = 
 			mkTable ((HashString.hashString) o (Tycon.toString), Tycon.equals) (37, Common.Not_found)
 		
-  val datatypeTable : (Con.t, Type_desc.type_desc list) hash_table = 
-    mkTable ((HashString.hashString) o (Con.toString), Con.equals) (37, Common.Not_found)
+		val datatypeTable : (Con.t, Type_desc.type_desc list) hash_table = 
+			mkTable ((HashString.hashString) o (Con.toString), Con.equals) (37, Common.Not_found)
 			
-     
-  fun cacheDataType v = (* set of mutually recursive datatype definitions *)
-    Vector.foreach (v, 
-          (fn {cons, tycon, tyvars} => (
-              print "\nassert cacheDataType\n"; 
-              print ("Tycon is " ^ (Tycon.toString tycon) ^ "\n");
-              Vector.foreach (cons, fn {arg, con} => (
-                print ("Constructor is " ^ (Con.toString con) ^ "\n");
-                print ("Arg is " ^ (case arg of SOME arg => CoreML.visitType arg | NONE => "NONE") ^ "\n")
-              ));
-              
-              Vector.foreach (cons, (fn {arg, con} => 
-                          let val te_list = case arg of 
-                              NONE => []
-                            | SOME t => 
-                              let val nt = Type.toMyType t 
-                              in
-                                case (nt) of
-                                    Ttuple li => List.map (li, fn (Tfield (_, t')) => t' 
-                                                    | _ => (print "\nUnknow Type\n"; assertfalse ()))
-                                  | _ => [nt]
-                              end
-                          in (* store in datatype table the constructor with its corresponding tycon and parameter type list *)
-                            HashTable.insert datatypeTable (con, (te_list));
-                            if (HashTable.inDomain sumdatatypeTable tycon) then
-                              let val existings = HashTable.lookup sumdatatypeTable tycon
-                              in HashTable.insert sumdatatypeTable (tycon, (con, te_list) :: existings) end
-                            else
-                              HashTable.insert sumdatatypeTable (tycon, [(con, te_list)])
-                          end
-                           ))
-                        
-          )))
-
-
+		fun cacheDataType v = (* set of mutually recursive datatype definitions *)
+			Vector.foreach (v, 
+            (fn {cons, tycon, tyvars} => (
+            		print "\nassert cacheDataType\n"; 
+            		print ("Tycon is " ^ (Tycon.toString tycon) ^ "\n");
+            		Vector.foreach (cons, fn {arg, con} => (
+            			print ("Constructor is " ^ (Con.toString con) ^ "\n");
+            			print ("Arg is " ^ (case arg of SOME arg => CoreML.visitType arg | NONE => "NONE") ^ "\n")
+            		));
+            		
+            		Vector.foreach (cons, (fn {arg, con} => 
+            								let val te_list = case arg of 
+            									  NONE => []
+            									| SOME t => 
+            										let val nt = Type.toMyType t 
+            										in
+	            										case (nt) of
+	            											  Ttuple li => List.map (li, fn (Tfield (_, t')) => t' 
+	            											  								| _ => (print "\nUnknow Type\n"; assertfalse ()))
+	            											| _ => [nt]
+            										end
+            								in (* store in datatype table the constructor with its corresponding tycon and parameter type list *)
+            									HashTable.insert datatypeTable (con, (te_list));
+            									if (HashTable.inDomain sumdatatypeTable tycon) then
+            										let val existings = HashTable.lookup sumdatatypeTable tycon
+            										in HashTable.insert sumdatatypeTable (tycon, (con, te_list) :: existings) end
+            									else
+            										HashTable.insert sumdatatypeTable (tycon, [(con, te_list)])
+            								end
+            							   ))
+            	          	
+            )))
+        
         fun getConIndex con ty = 
         	let val tyc = Type.deConOpt ty
         	in
@@ -865,7 +841,6 @@ structure Constraintgen (*: CONSTRAINTGEN *) =
 		      														| _ => [e2]
 		      						val tycon1 = case tyy of Type_desc.Tconstr (tyc, _) => tyc | _ => (print "\nIll constructor\n"; assertfalse ()) 
 		      						val tylist = HashTable.lookup datatypeTable c handle Not_found => [] (* built-in constructor *)
-          
 		      						val t = Tconstr (tycon1, tylist)
 		      						val sumf = #3 environment
 		      						val f = case sumf of
@@ -1149,7 +1124,7 @@ structure Constraintgen (*: CONSTRAINTGEN *) =
 			let 
         (* guard updated with correct guard value *)
 				val guard = (guardvar, i, true) :: guard
-        (*val _ = print ("Before matchcase_tbind, pat is "^(CoreML.Pat.visitPat pat)^" and pexpr is "^(P.pprint_pexpr matche)^"\n")*)
+        val _ = print ("Before matchcase_tbind, pat is "^(CoreML.Pat.visitPat pat)^" and pexpr is "^(P.pprint_pexpr matche)^"\n")
 				val env = matchcase_tbind env pat matchf matche
         (* Now, env contains mapping bewteen  
            1. pat frame and matchf

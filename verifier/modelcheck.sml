@@ -1229,7 +1229,7 @@ structure Modelcheck =
 		 *)
 		open Constraint
 		
-		fun qualify_implementation fenv ifenv str inv_file =
+		fun qualify_implementation fenv ifenv renv str inv_file =
 			let (* Loading the invariants necessary *)
 				val invariants = case inv_file of
 	      		  	SOME inv_file => (
@@ -1260,6 +1260,7 @@ structure Modelcheck =
 				val polymatching_table = HashTable.mkTable (hash_fn o (Var.toString), Var.logic_equals) (117, Not_found)
 				
 				(* in the toplevel and dummy main; after executing it, side effect is freevars is stuffed with frames *)
+				val (fenv, renv, cs, rcs) = RelConstraintgen.constrain_structure fenv renv [] str polymatching_table
 				val (fenv, cs, binding_table, call_deps, binding_frame, paths, insidefunbindings) = Constraintgen.constrain_structure 
 						fenv 
 						[] 
@@ -1269,6 +1270,7 @@ structure Modelcheck =
 						freevars
 						totalvars
 						polymatching_table
+
 				(* Constraints with additional frames given by user or third party tools *)
 				(* val cs = (List.map ((Le.maplistfilter (mfm fenv) ifenv), (lbl_dummy_cstr))) @ cs *)
 				val _ = print ("\nThe inferred constraints with a total number of " ^ (Int.toString (List.length cs)) ^ " are shown below \n")

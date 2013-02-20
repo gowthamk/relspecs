@@ -6,20 +6,30 @@ signature REL_PREDICATE =
 	sig
     include ATOMS
 
-    datatype rexpr = 
-		    RVar of Con.t * Var.t
-      | RSet of Var.t list
-      | RUnion of rexpr*rexpr (*R(l) U {x}*)
-      | RJoin of Var.t list * rexpr * rexpr
-      | RProj of Var.t list * rexpr (* Pi{key,value}R(tree) *)
-      | RSel of Predicate.t*rexpr
-      | RAgg of Var.t * rexpr
+    (* we are only concerned with variables and integers. Other patterns
+       should have suitable bindings in the env *)
 
-    datatype rbinrel =
-        REq
-      | RNe
-      | RSubset
-      | RSuperset
+  type typedvar = Var.t * Type_desc.type_desc
+
+  datatype relem = 
+      RVar of typedvar
+    | RInt of int
+
+  datatype rexpr = 
+      RRel of Con.t * typedvar (* R(Cons,l); R(Nil,l) *)
+    | RSet of relem list (* list of tuples. [1,2]= {(1),(2)} Node(lt,k,v,rt) = {(k,v)} *)
+    | RSum of rexpr list
+    | RUnion of rexpr list
+    | RJoin of Var.t list * rexpr * rexpr
+    | RProj of Var.t list * rexpr (* Pi{key,value}R(tree) *)
+    | RSel of Predicate.t*rexpr
+    | RAgg of Var.t * rexpr
+
+  datatype rbinrel =
+      REq
+    | RNe
+    | RSubset
+    | RSuperset
 
   datatype rel_predicate =
       RFold of Predicate.pexpr * rexpr
@@ -42,27 +52,38 @@ signature REL_PREDICATE =
 		val pprint: t -> string
 		val pprint_rexpr: rexpr -> string*)
 		
-		val requals : rexpr -> rexpr -> t 
-		
-		val rnequals : rexpr -> rexpr -> t
-		
-	  val rsub : rexpr -> rexpr -> t	
+  val requals : rexpr -> rexpr -> t 
+  
+  val rnequals : rexpr -> rexpr -> t
+  
+  val rsub : rexpr -> rexpr -> t	
 
-	  val rsup : rexpr -> rexpr -> t	
-		
-		val rfold : Predicate.pexpr -> rexpr -> t
+  val rsup : rexpr -> rexpr -> t	
+  
+  val rfold : Predicate.pexpr -> rexpr -> t
 
-		val rando : t -> t -> t
-		
-		val roro : t -> t -> t
-		
-		val rnoto : t -> t
-		
-		val riffo: Predicate.pexpr -> t -> t
+  val rando : t -> t -> t
+  
+  val roro : t -> t -> t
+  
+  val rnoto : t -> t
+  
+  val riffo: Predicate.pexpr -> t -> t
 
-		val rimply : t -> t -> t
+  val rimply : t -> t -> t
 		
-		val rexpr_length : rexpr -> int
+  val make_typedvar : Var.t * Type_desc.type_desc -> typedvar
+
+  val make_rvar : typedvar -> relem
+
+  val make_rrel : Con.t * typedvar -> rexpr
+
+  val make_rset : relem list -> rexpr
+
+  val make_runion : rexpr list -> rexpr
+
+  val make_null_rset : unit -> rexpr
+(*		val rexpr_length : rexpr -> int*)
 	end
 	
 structure RelPredicate :REL_PREDICATE =
@@ -71,11 +92,18 @@ struct
   open Atoms
   open Common
 
+  type typedvar = Var.t
+
+  datatype relem = 
+      RVar of typedvar
+    | RInt of int
+
   datatype rexpr = 
-      RVar of Con.t * Var.t
-    | RSet of Var.t list
+      RRel of Con.t * typedvar (* R(Cons,l); R(Nil,l) *)
+    | RSet of relem list (* list of tuples. [1,2]= {(1),(2)} Node(lt,k,v,rt) = {(k,v)} *)
+    | RSum of rexpr list
+    | RUnion of rexpr list
     | RJoin of Var.t list * rexpr * rexpr
-    | RUnion of rexpr*rexpr (*R(l) U {x}*)
     | RProj of Var.t list * rexpr (* Pi{key,value}R(tree) *)
     | RSel of Predicate.t*rexpr
     | RAgg of Var.t * rexpr
@@ -125,12 +153,23 @@ struct
 
   fun rimply p q = roro (rnoto p) q				
 
-  fun rexpr_length rexpr = case rexpr of
+  fun make_typedvar (v) : typedvar = v
+
+  fun make_rvar tv = RVar tv
+
+  fun make_rrel (c,v) = RRel (c,v)
+
+  fun make_rset l = RSet l
+
+  fun make_runion l = RUnion l
+
+  fun make_null_rset () = RSet []
+  (*fun rexpr_length rexpr = case rexpr of
       RVar _ => 1 
     | RSet _ => 1
     | RUnion (r1,r2) => (rexpr_length r1) + (rexpr_length r2)   
     | RJoin (attr,r1,r2) => (rexpr_length r1) + (rexpr_length r2) 
     | RProj (_, r) => 1 + rexpr_length r
     | RSel (_, r) => 1 + rexpr_length r
-    | RAgg (_, r) => 1 + rexpr_length r
+    | RAgg (_, r) => 1 + rexpr_length r*)
 end

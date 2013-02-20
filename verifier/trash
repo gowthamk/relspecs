@@ -1,0 +1,3 @@
+case (constexp_to_int e) of
+                          SOME i => [RP.RInt i]
+                        | NONE => (print ("Only ints for constructor args\n");assertfalse())

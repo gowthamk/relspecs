@@ -34,6 +34,8 @@ signature REL_BUILTIN =
 		val tag_function : string
 		
 		val frames : unit -> (Var.t * RelFrame.t) list
+    
+		val equality_qualifier : Type_desc.type_desc -> Con.t ->  RelPredicate.rexpr -> RelQualifier.t
 
 		val and_frame : Predicate.t -> Predicate.t -> RelFrame.t 
 		
@@ -234,6 +236,14 @@ structure RelBuiltin (*: BUILTIN*) =
 			end
 			)
 			
+		fun equality_qualifier con exp =
+			let 
+        val x = Var.mk_ident "V" 
+        val tyv = RP.make_typedvar(x)
+				val rpred = RP.requals (RP.make_rrel (con,tyv)) exp
+		   		val expstr = RP.pprint rpred 
+		   	in (Var.mk_ident expstr, tyv, rpred) end
+
 		fun not_frame p = 
 			(reset_idents ();
 			let val z  = Var.fromString (fresh_ident ())
@@ -263,4 +273,13 @@ structure RelBuiltin (*: BUILTIN*) =
 			in
 				resolve_names mframes
 			end
+
+		fun field_eq_qualifier name c rexp =
+			let 
+        val x = RP.make_typedvar (Var.mk_ident "x")
+		  	in (Var.mk_ident "<field_eq>", x, (equals (Field (name, PVar x)) pexp)) end
+		
+		fun proj_eq_qualifier n pexp =
+			let val x = Var.mk_ident "x" 
+			in (Var.mk_ident "<tuple_nth_eq>", x, (equals (Proj (n, PVar x)) pexp)) end
 	end

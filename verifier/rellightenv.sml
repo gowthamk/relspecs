@@ -1,3 +1,9 @@
+(**
+ * An environment to keep track of set bindings.
+ * We seek to keep liquid predicate environment separately so that
+ * it keeps doing what it does best.
+ *)
+
 signature REL_LIGHTENV = 
 	sig
 		include ATOMS

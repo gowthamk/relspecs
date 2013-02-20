@@ -7,9 +7,7 @@ signature PATTERN =
 		val pattern_extend : CoreML.Pat.t option -> CoreML.Pat.t list
 		val bind_vars : CoreML.Pat.t -> CoreML.Pat.t -> (Var.t * Var.t) list
 		val bind_pexpr : CoreML.Pat.t -> Predicate.pexpr -> (Var.t * Predicate.pexpr) list
-		val bind_rexpr : CoreML.Pat.t -> RelPredicate.rexpr -> (Var.t * RelPredicate.rexpr) list
 		val desugar_bind : CoreML.Pat.t -> Predicate.pexpr -> Predicate.t
-		val desugar_rbind : CoreML.Pat.t -> RelPredicate.rexpr -> RelPredicate.t
 		val same : (CoreML.Pat.t * CoreML.Pat.t) -> bool
 		val vars : CoreML.Pat.t -> Var.t list
 	end
@@ -62,6 +60,17 @@ structure Pattern : PATTERN =
 		
 		fun bind_pexpr pat pexp =
 			let fun bind_rec ((pat, pexp), subs) = (
+					(*print ("%%%Pat is " ^ (CoreML.Pat.visitPat pat) ^ " : " ^ (
+						 case (CoreML.Pat.node pat) of
+							CoreML.Pat.Con _ => "con"
+							| CoreML.Pat.List _ => "list"
+							| CoreML.Pat.Record _ => "record"
+							| CoreML.Pat.Tuple _ => "tuple"
+							| CoreML.Pat.Var _ => "var"
+							| CoreML.Pat.Wild => "_"
+							| _ => "impossible"
+					));
+					print ("pexp is " ^ (Predicate.pprint_pexpr pexp) ^ "\n");*)
 				    case (CoreML.Pat.node pat) of
 				      CoreML.Pat.Wild => subs
 				    | CoreML.Pat.Var x => (x, pexp) :: subs
@@ -74,52 +83,8 @@ structure Pattern : PATTERN =
 				    | _ => subs
 				    )
 			in bind_rec ((pat, pexp), []) end
-
-		fun bind_rexpr pat rexp =
-			let fun bind_rec ((pat, rexp), subs) = (
-				    case (CoreML.Pat.node pat) of
-				      CoreML.Pat.Wild => subs
-				    | CoreML.Pat.Var x => (x, rexp) :: subs
-				    | CoreML.Pat.Tuple pats =>
-					      let val pexps = mapi (fn i => fn pat => (pat, P.Proj(i+1, pexp))) (Vector.toList pats) 
-					      in List.fold (pexps, subs, bind_rec) end
-					| CoreML.Pat.Record pats =>
-							let val pexps = Vector.map ((Record.toVector pats), fn (n, c) => (c, P.Field (Field.toString n, pexp)))	
-							in Vector.fold (pexps, subs, bind_rec) end	 
-				    | _ => subs
-				    )
-			in bind_rec ((pat, pexp), []) end
-
-    fun pat_to_rexpr pat = case CoreML.Pat.node pat of
-        CoreML.Pat.Con {arg=NONE,con=c,targs=targv} =>
-        CoreML.Pat.Con {arg=SOME pat',con=c,targs=targv} => 
-        let
-          fun atoms_to_rexpr pat' = (case pat' of
-              CoreML.Pat.Const constf => 
-              let
-                 val constval = ( case constf() of 
-                     Const.IntInf n => (IntInf.toInt n)
-                   | Const.Word n => (WordX.toInt n)
-                   | _ => (print "Only int consts are allowed\n"; assertfalse ()))
-              in
-                RP.make_rset [RP.RInt constval]
-              end
-            | CoreML.Pat.Var varf => RP.make_rrel(defaultCons,RP.make_typedvar(varf())))
-        in
-          (case CoreML.Pat.node pat' of
-            CoreML.Pat.Const _ => atoms_to_rexpr pat'
-          | CoreML.Pat.Var _ => atoms_to_rexpr pat'
-          | CoreML.Pat.Record pat_rec => 
-              Vector.toListMap
-          | _ =>(print "Invalid constructor args in pattern\n";assertfalse()) 
-        )
-        end
-      | _ => NONE
 		
 		fun desugar_bind pat pexp =
-		  P.big_and (List.map ((bind_pexpr pat pexp), (fn (x, exp) => P.equals (P.PVar x) exp)))
-
-		fun desugar_rbind pat pexp =
 		  P.big_and (List.map ((bind_pexpr pat pexp), (fn (x, exp) => P.equals (P.PVar x) exp)))
 		
 		fun same (p1, p2) =

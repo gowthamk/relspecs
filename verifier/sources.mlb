@@ -29,6 +29,7 @@ local
 	constraint.sml
   relconstraint.sml
 	constraintgen.sml
+  relconstraintgen.sml
 	ann "allowFFI true" in	
 		testrun.sml
 	end

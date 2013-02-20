@@ -265,57 +265,59 @@ structure RelFrame : REL_FRAME =
 		(* We build fresh refinement variables*)
     (* fresh_refinementvar :open_assignment -> refinement *)
     (* refinement is [substitution list]*qualifier_expr *)
-		fun fresh_refinementvar open_assn = ([], RQvar (Var.mk_ident "k", open_assn))
+		fun fresh_refinementvar open_assn = ([], RQvar (Var.mk_ident "r", open_assn))
 		fun fresh_true () = ([], RQconst ([(Var.dummy (), Var.mk_ident "true", RelPredicate.RTrue)]))
-		fun fresh_rfvar () = RFvar (Var.mk_ident "a", ([], RQvar (Var.mk_ident "k", RTop)))
+		fun fresh_rfvar () = RFvar (Var.mk_ident "a", ([], RQvar (Var.mk_ident "r", RTop)))
 		
 		(* Create a fresh frame with the same shape as the type of [exp] using
 		   [fresh_ref_var] to create new refinement variables. *)
     (* fresh_with_var_fun :(useless) ->Type_desc.t -> (unit -> refinement) -> (TyCon, Valcon list) hashtable
                             -> Frame.t *)
-		fun fresh_with_var_fun vars ty fresh_ref_var datatypeTable =
-      (* tyconslist = []; freshf = fresh_ref_var; t = ty *)
-			let fun fresh_rec freshf tyconslist t = 
-		    	case t of
-		        	  Type_desc.Tvar tvar => fresh_rfvar ()
-		      		| Type_desc.Tconstr(p, tyl) => (
-                  if (HashTable.inDomain datatypeTable p) then (
-                    let 
-                      val conlist = HashTable.lookup datatypeTable p
-                      val fs = 
-                        if (List.exists (tyconslist, fn ty_cons => Tycon.equals (ty_cons, p))) then
-                          []
-                        else
-                          List.map (conlist, fn (con, tylist) => (* analyze *)
-                            (con, RFconstr (p, (List.map (tylist, (fresh_rec freshf (p::tyconslist)))), freshf()))
-                          )
-                    in
-                      RFsum (p, fs, freshf()) 
-                    end
-                  )
-                  else
-                    (* Not a sum datatype. Just type. *)
-                    let
-                      val frame = RFconstr (p, (List.map (tyl, (fresh_rec freshf tyconslist))), freshf()) 
-                      (*val _ = print ("\nFconstr frame -- "^(pprint frame)^"\n")*)
-                    in
-                      frame
-                    end
-                )
-		      		| Type_desc.Tarrow(t1, t2) => RFarrow (NONE, fresh_rec freshf tyconslist t1, fresh_rec freshf tyconslist t2)
-		      		| Type_desc.Ttuple fields => 
-			      		let fun fresh_field mt = case mt of 
-			      			  Type_desc.Tfield (name, typ) => let val field_typ = fresh_rec freshf tyconslist typ in (field_typ, name) end
-			      			| _ => assertfalse ()
-			      		in RFrecord (List.map (fields, fresh_field), freshf()) end
-		      		| _ => (print "@[Warning: Freshing unsupported type]@."; RFunknown)
-		    in fresh_rec fresh_ref_var [] ty
-		    end
-		
+  fun fresh_with_var_fun vars ty fresh_ref_var datatypeTable =
+    (* tyconslist = []; freshf = fresh_ref_var; t = ty *)
+    let fun fresh_rec freshf tyconslist t = case t of
+        Type_desc.Tvar tvar => fresh_rfvar ()
+      | Type_desc.Tconstr(p, tyl) => (
+        if (HashTable.inDomain datatypeTable p) then
+          let
+            val tyfs = List.map (tyl,(fresh_rec freshf tyconslist))
+          in
+            RFconstr (p,tyfs,freshf())
+          end
+        else
+          (* Not a sum datatype. Just type. Give bottom frames*)
+          let
+            val bottom_freshf = (fn _ => fresh_refinementvar RBottom)
+            val tyfs = List.map (tyl,(fresh_rec freshf tyconslist))
+            val frame = RFconstr (p, [], bottom_freshf()) 
+            (*val _ = print ("\nFconstr frame -- "^(pprint frame)^"\n")*)
+          in
+            frame
+          end
+      )
+      | Type_desc.Tarrow(t1, t2) => RFarrow (NONE, fresh_rec freshf tyconslist t1, fresh_rec freshf tyconslist t2)
+      | Type_desc.Ttuple fields => 
+        let fun fresh_field mt = case mt of 
+          Type_desc.Tfield (name, typ) => 
+          let 
+            val field_typ = fresh_rec freshf tyconslist typ 
+          in 
+            (field_typ, name) 
+          end
+          | _ => assertfalse ()
+        in RFrecord (List.map (fields, fresh_field), freshf()) end
+      | _ => (print "@[Warning: Freshing unsupported type]@."; RFunknown)
+    in 
+      fresh_rec fresh_ref_var [] ty
+    end
+
+		(* fresh frame for given type *)
 		fun fresh ty datatypeTable = 
 			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar RTop) datatypeTable (* qvar *)
+
 		fun fresh_unconstrained ty datatypeTable =
 			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar RBottom) datatypeTable (* qvar *)
+
 		fun fresh_without_vars ty datatypeTable =
 			fresh_with_var_fun (ref []) ty (fn _ => empty_refinement) datatypeTable (* empty qconst *)
 		
