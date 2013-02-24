@@ -1,4 +1,4 @@
-signature FRAME = 
+signature OLD_FRAME = 
 	sig	
 		include ATOMS
 
@@ -32,9 +32,9 @@ signature FRAME =
 		val same_shape: bool -> (t * t) -> bool
 		val fresh_true : unit -> refinement
     (* fresh gives a new frame for given type. It takes Type Constructor to value constructor mapping. *)
-		val fresh: CoreML.Type_desc.type_desc -> TyconMap.t -> t
-		val fresh_without_vars: CoreML.Type_desc.type_desc -> TyconMap.t -> t
-		val fresh_unconstrained: CoreML.Type_desc.type_desc -> TyconMap.t -> t
+		val fresh: CoreML.Type_desc.type_desc -> (Tycon.t, (Con.t * Type_desc.type_desc list) list) HashTable.hash_table -> t
+		val fresh_without_vars: CoreML.Type_desc.type_desc -> (Tycon.t, (Con.t * Type_desc.type_desc list) list) HashTable.hash_table -> t
+		val fresh_unconstrained: CoreML.Type_desc.type_desc -> (Tycon.t, (Con.t * Type_desc.type_desc list) list) HashTable.hash_table -> t
 		(*val fresh_constructor: CoreML.Type_desc.type_desc -> t -> t list*)
 		val instantiate: t -> t -> (Var.t, Var.t) HashTable.hash_table -> t
 		val instantiate_qualifiers: (string * Var.t) list -> t -> t
@@ -86,7 +86,7 @@ signature FRAME =
 		(*val funframe_pred : Var.t -> t -> Predicate.t*)
 	end
 	
-structure Frame : FRAME =
+structure OldFrame : OLD_FRAME =
 	struct
 		open Atoms
 		open Common
@@ -96,7 +96,6 @@ structure Frame : FRAME =
 		
 		open CoreML
 		open Pat
-    structure TM = TyconMap
 		
 				
 		(* a variable later could be replace by an expression. In order to be efficient, expression is represented by predicate.pexpr *)
@@ -154,7 +153,7 @@ structure Frame : FRAME =
              		| _ => assertfalse () 
              end
      	
-		and pprint_pattern_vector pats = "("^(Vector.fold (pats, "", (fn (pat, str) => (str ^ (pprint_pattern pat) ^ ", "))))^")" 
+		and pprint_pattern_vector pats = Vector.fold (pats, "", (fn (pat, str) => (str ^ (pprint_pattern pat) ^ ", "))) 
 		
 		and pprint_pattern_list pats = Vector.fold (pats, "", (fn (pat, str) => (str ^ (pprint_pattern pat) ^ ", "))) 
 
@@ -411,7 +410,7 @@ structure Frame : FRAME =
 		(* Instantiate the tyvars in fr with the corresponding frames in ftemplate.
 		   If a variable occurs twice, it will only be instantiated with one frame; which
 		   one is undefined and unimportant. *)
-    (* Summarily, this function monomorphizes identifier *)
+    (*  *)
 		fun instantiate fr (* Frame.t *)
                     ftemplate (* Frame.t *)
                     polymatching_table (* (Var.t,Var.t) hash_table*) =
@@ -424,8 +423,6 @@ structure Frame : FRAME =
 							  in
                   case ff of
                       SOME (f', ft') => f'  (* Make a major change here by He Zhu *) 
-                      (*GK : ft' contains refinements for current context.
-                        So ft' should be returned *)
                     | NONE => (vars := (f, ft) :: (!vars); f) (* And there *)
                 end	
 					  | (Fvar (a, r), _) => (
@@ -439,7 +436,6 @@ structure Frame : FRAME =
 					  				| Farrow _ => NONE
 					  				| _ => NONE
 					  			val _ = case (fk, ftk) of
-                    (* polymatching_table contains equivalence of refinement_vars *)
 					  				(SOME fk, SOME ftk) => HashTable.insert polymatching_table (ftk, fk)
 									| _ => ()
 							in
@@ -491,7 +487,7 @@ structure Frame : FRAME =
 		fun instantiate_qualifiers_map vars fr = 
 			case fr of 
 				  (subs, Qconst qs) => (subs, Qconst (List.map (qs, (fn q => case (Qualifier.instantiate vars q) of SOME q => q | NONE => q))))
-		  		| r => r (* so we keep Qvar intact *)
+		  		| r => r
 		(* Mainly let this work for Qconst *)
 		(* So all the program variables in a quliafier is related to the one in our language representation *)
 		fun instantiate_qualifiers vars fr =
@@ -508,18 +504,24 @@ structure Frame : FRAME =
 		   [fresh_ref_var] to create new refinement variables. *)
     (* fresh_with_var_fun :(useless) ->Type_desc.t -> (unit -> refinement) -> (TyCon, Valcon list) hashtable
                             -> Frame.t *)
-		fun fresh_with_var_fun vars ty fresh_ref_var tm =
+		fun fresh_with_var_fun vars ty fresh_ref_var datatypeTable =
       (* tyconslist = []; freshf = fresh_ref_var; t = ty *)
 			let fun fresh_rec freshf tyconslist t =  (* We will have recursive types. And only the very top definition can be extensively formulated *)
 		    	case t of
-                (* For type variables, we just have frame vars *)
-		        	  Type_desc.Tvar tvar => fresh_fvar ()
+		        	  Type_desc.Tvar tvar =>
+		        	  	(*let val c = List.peek (!vars, ((fn (var, _) => case var of Type_desc.Tvar tvar' => (Tyvar.sameName(tvar, tvar')) | _ => assertfalse ())))
+		        		in case c of
+		        			  SOME (t, fv') => fv'
+		        			| NONE => 
+					            let val fv = fresh_fvar () 
+					            in (vars := (t, fv) :: !vars; fv)
+					            end
+					     end*)
+					     fresh_fvar ()
 		      		| Type_desc.Tconstr(p, tyl) => (
-                (* A typeconstr is in datatype table only if it has been defined with 
-                   datatype declaration *)
-	      				if (TM.tycon_mem tm p) then (
+	      				if (HashTable.inDomain datatypeTable p) then (
 		      				let 
-                    val conlist = TM.get_tycon_def tm p
+                    val conlist = HashTable.lookup datatypeTable p
 		      					val fs = 
 		      						if (List.exists (tyconslist, fn ty_cons => Tycon.equals (ty_cons, p))) then
                         (* have I seen this tycon before? Yes, then set cons->frame map to [] ??*)
@@ -533,20 +535,13 @@ structure Frame : FRAME =
 		      								(con, Fconstr (p, (List.map (tylist, (fresh_rec freshf (p::tyconslist)))), freshf()))
 		      								(*(con, (fresh_rec freshf (p::tyconslist) (Type_desc.Tconstr (p, tylist))))*)
 										)
-                  in
-                    Fsum (p, fs, freshf()) 
-                  end)
+							in
+								Fsum (p, fs, freshf()) 
+							end
+						)
 		      			else
-                  (* Not a sum datatype. Just type. *)
-                  let
-		      				  val frame = Fconstr (p, (List.map (tyl, (fresh_rec freshf tyconslist))), freshf()) 
-                    val _ = print ("\nFconstr frame -- "^(pprint frame)^"\n")
-                  in
-                    frame
-                  end
-
+		      				Fconstr (p, (List.map (tyl, (fresh_rec freshf tyconslist))), freshf()) 
                   (* wouldn't that assign same refinement_var to all types in 'a 'b list? *)
-                  (* No. fresh_rec calls freshf thunk to create new ref_vars with T assignment *)
 		      		)
 		      		| Type_desc.Tarrow(t1, t2) => Farrow (NONE, fresh_rec freshf tyconslist t1, fresh_rec freshf tyconslist t2)
 		      		| Type_desc.Ttuple fields => 
@@ -558,12 +553,12 @@ structure Frame : FRAME =
 		    in fresh_rec fresh_ref_var [] ty
 		    end
 		
-		fun fresh ty tm = 
-			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar Top) tm (* qvar *)
-		fun fresh_unconstrained ty tm =
-			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar Bottom) tm (* qvar *)
-		fun fresh_without_vars ty tm =
-			fresh_with_var_fun (ref []) ty (fn _ => empty_refinement) tm (* empty qconst *)
+		fun fresh ty datatypeTable = 
+			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar Top) datatypeTable (* qvar *)
+		fun fresh_unconstrained ty datatypeTable =
+			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar Bottom) datatypeTable (* qvar *)
+		fun fresh_without_vars ty datatypeTable =
+			fresh_with_var_fun (ref []) ty (fn _ => empty_refinement) datatypeTable (* empty qconst *)
 		
 		(* All returned are about formal argtypes. cstrdesc should be a constructor type; 
 		 * Ideally we want it to be Tconster (...)

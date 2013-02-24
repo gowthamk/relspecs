@@ -819,7 +819,7 @@ structure BackwardTraverse =
 						  						(Predicate.Atom (
 						  							Predicate.FunApp ("__constr", [Predicate.PVar (var())]), 
 						  							Predicate.Eq,
-						  							Predicate.PInt (Constraintgen.getConIndex con (CoreML.Pat.ty pat))
+						  							Predicate.PInt (RelConstraintgen.getConIndex con (CoreML.Pat.ty pat))
 						  						)) pred
 						  				)
 						  				| _ => (

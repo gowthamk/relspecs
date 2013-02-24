@@ -19,7 +19,9 @@ local
 	../loopinvariantparser/sources.mlb
 	
 	heap.sml
+  tyconmap.sml
 	pattern.sml
+  oldframe.sml
 	frame.sml
 	relframe.sml
 	lightenv.sml
@@ -32,7 +34,7 @@ local
   relconstraintgen.sml
 	ann "allowFFI true" in	
 		testrun.sml
-	end
+	end 
 	backwalker.sml
 	
 	vc.sml
@@ -40,6 +42,8 @@ local
 	
 	
 in
+  signature TYCON_MAP
+  structure TyconMap
 	signature LIGHTENV
 	structure Lightenv
 	signature REL_LIGHTENV

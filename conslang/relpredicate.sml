@@ -9,7 +9,7 @@ signature REL_PREDICATE =
     (* we are only concerned with variables and integers. Other patterns
        should have suitable bindings in the env *)
 
-  type typedvar = Var.t * Type_desc.type_desc
+  type typedvar = Var.t
 
   datatype relem = 
       RVar of typedvar
@@ -18,12 +18,11 @@ signature REL_PREDICATE =
   datatype rexpr = 
       RRel of Con.t * typedvar (* R(Cons,l); R(Nil,l) *)
     | RSet of relem list (* list of tuples. [1,2]= {(1),(2)} Node(lt,k,v,rt) = {(k,v)} *)
-    | RSum of rexpr list
     | RUnion of rexpr list
-    | RJoin of Var.t list * rexpr * rexpr
+    (*| RJoin of Var.t list * rexpr * rexpr
     | RProj of Var.t list * rexpr (* Pi{key,value}R(tree) *)
     | RSel of Predicate.t*rexpr
-    | RAgg of Var.t * rexpr
+    | RAgg of Var.t * rexpr*)
 
   datatype rbinrel =
       REq
@@ -32,26 +31,30 @@ signature REL_PREDICATE =
     | RSuperset
 
   datatype rel_predicate =
-      RFold of Predicate.pexpr * rexpr
-    | RAtom of rexpr * rbinrel * rexpr
+      RAtom of rexpr * rbinrel * rexpr
+  (*  | RFold of Predicate.pexpr * rexpr *)
 
   datatype rpexpr = 
       RExpr of rexpr
-    | PExpr of Predicate.pexpr
+    (*| PExpr of Predicate.pexpr*)
 
   (* Predicate expression *)
   datatype t =
       RTrue
     | RPred of rel_predicate
-    | RIff of Predicate.pexpr * t
+    (*| RIff of Predicate.pexpr * t*)
     | RNot of t
     | RAnd of t * t 
     | ROr of t * t
 
 		(*val pprint_rel: rbinrel -> string
-		val pprint: t -> string
 		val pprint_rexpr: rexpr -> string*)
-		
+
+  val pprint: t -> string
+
+  (* Update some predicate var with another instance of var *)
+  val instantiate_named_vars: (string * Var.t) list -> t -> t
+
   val requals : rexpr -> rexpr -> t 
   
   val rnequals : rexpr -> rexpr -> t
@@ -60,7 +63,7 @@ signature REL_PREDICATE =
 
   val rsup : rexpr -> rexpr -> t	
   
-  val rfold : Predicate.pexpr -> rexpr -> t
+ (* val rfold : Predicate.pexpr -> rexpr -> t*)
 
   val rando : t -> t -> t
   
@@ -68,11 +71,11 @@ signature REL_PREDICATE =
   
   val rnoto : t -> t
   
-  val riffo: Predicate.pexpr -> t -> t
+  (*val riffo: Predicate.pexpr -> t -> t*)
 
   val rimply : t -> t -> t
 		
-  val make_typedvar : Var.t * Type_desc.type_desc -> typedvar
+  val make_typedvar : Var.t  -> typedvar
 
   val make_rvar : typedvar -> relem
 
@@ -82,9 +85,10 @@ signature REL_PREDICATE =
 
   val make_runion : rexpr list -> rexpr
 
+  val make_dummy_rexpr : unit -> rexpr
+		
   val make_null_rset : unit -> rexpr
-(*		val rexpr_length : rexpr -> int*)
-	end
+end
 	
 structure RelPredicate :REL_PREDICATE =
 struct
@@ -101,12 +105,11 @@ struct
   datatype rexpr = 
       RRel of Con.t * typedvar (* R(Cons,l); R(Nil,l) *)
     | RSet of relem list (* list of tuples. [1,2]= {(1),(2)} Node(lt,k,v,rt) = {(k,v)} *)
-    | RSum of rexpr list
     | RUnion of rexpr list
-    | RJoin of Var.t list * rexpr * rexpr
+    (*| RJoin of Var.t list * rexpr * rexpr
     | RProj of Var.t list * rexpr (* Pi{key,value}R(tree) *)
     | RSel of Predicate.t*rexpr
-    | RAgg of Var.t * rexpr
+    | RAgg of Var.t * rexpr*)
 
   datatype rbinrel =
       REq
@@ -115,21 +118,31 @@ struct
     | RSuperset
 
   datatype rel_predicate =
-      RFold of Predicate.pexpr * rexpr
-    | RAtom of rexpr * rbinrel * rexpr
+      RAtom of rexpr * rbinrel * rexpr
+  (*  | RFold of Predicate.pexpr * rexpr *)
 
   datatype rpexpr = 
       RExpr of rexpr
-    | PExpr of Predicate.pexpr
+    (*| PExpr of Predicate.pexpr*)
 
   (* Predicate expression *)
   datatype t =
       RTrue
     | RPred of rel_predicate
-    | RIff of Predicate.pexpr * t
+    (*| RIff of Predicate.pexpr * t*)
     | RNot of t
     | RAnd of t * t 
     | ROr of t * t
+
+  fun pprint t = "RP.pprint"
+
+  fun make_dummy_rexpr () =
+  let
+    val dummy_var = Var.mk_ident "dummy"
+    val any_cons = Con.fromString "any"
+  in
+    RRel (any_cons,dummy_var)
+  end
 
   fun requals p q = RPred (RAtom(p, REq, q))
 
@@ -145,11 +158,11 @@ struct
 
   fun rnoto p = RNot p
 
-  fun riffo p q = RIff (p, q)
+  (*fun riffo p q = RIff (p, q)*)
 
-  fun rfold p q = case q of
+  (*fun rfold p q = case q of
       RAgg _ => RPred (RFold (p, q))
-    | _ => (print "rfold over non agg\n"; assertfalse ())
+    | _ => (print "rfold over non agg\n"; assertfalse ())*)
 
   fun rimply p q = roro (rnoto p) q				
 
@@ -164,12 +177,36 @@ struct
   fun make_runion l = RUnion l
 
   fun make_null_rset () = RSet []
-  (*fun rexpr_length rexpr = case rexpr of
-      RVar _ => 1 
-    | RSet _ => 1
-    | RUnion (r1,r2) => (rexpr_length r1) + (rexpr_length r2)   
-    | RJoin (attr,r1,r2) => (rexpr_length r1) + (rexpr_length r2) 
-    | RProj (_, r) => 1 + rexpr_length r
-    | RSel (_, r) => 1 + rexpr_length r
-    | RAgg (_, r) => 1 + rexpr_length r*)
+
+  fun rexpr_map_vars f rexp =
+    let val rec map_rec = fn
+        RRel (c,v) => RRel (c,f v)
+      | RSet l =>
+          RSet (List.map(l,
+            (fn x => case x of
+                RVar v => RVar (f v)
+              | _ => x)))
+      | RUnion l => RUnion (List.map(l,map_rec))
+      | e => e
+    in map_rec rexp end
+
+  fun rpred_map_vars f rp = case rp of
+    RAtom (re1,br,re2) => RAtom ((rexpr_map_vars f re1),br,(rexpr_map_vars f re2))
+  | _ => fail "unexpected rpred\n"
+  
+  fun map_vars f pred =
+    let val rec map_rec = fn
+        RTrue =>
+          RTrue
+      | RPred rp => RPred (rpred_map_vars f rp)
+      | RNot p =>
+          RNot (map_rec p)
+      | RAnd (p, q) =>
+          RAnd (map_rec p, map_rec q)
+      | ROr (p, q) =>
+          ROr (map_rec p, map_rec q)
+    in map_rec pred end	  
+  
+  fun instantiate_named_vars subs rpred =
+    map_vars (fn y => (Common.assoc1 (Var.toString y) subs)) rpred
 end

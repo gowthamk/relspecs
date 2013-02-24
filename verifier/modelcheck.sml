@@ -1261,7 +1261,7 @@ structure Modelcheck =
 				
 				(* in the toplevel and dummy main; after executing it, side effect is freevars is stuffed with frames *)
 				val (fenv, renv, cs, rcs) = RelConstraintgen.constrain_structure fenv renv [] str polymatching_table
-				val (fenv, cs, binding_table, call_deps, binding_frame, paths, insidefunbindings) = Constraintgen.constrain_structure 
+				(*val (fenv, cs, binding_table, call_deps, binding_frame, paths, insidefunbindings) = Constraintgen.constrain_structure 
 						fenv 
 						[] 
 						str 
@@ -1269,7 +1269,14 @@ structure Modelcheck =
 						(Pat.var (Var.fromString "dummymain", Type.var(Tyvar.newNoname {equality = false})))
 						freevars
 						totalvars
-						polymatching_table
+						polymatching_table*)
+        val binding_table = HashTable.mkTable (hash_fn o (Var.toString) o pat_var, pat_eq) 
+                              (17, Not_found)
+        val binding_frame = HashTable.mkTable (hash_fn o (Var.toString) o pat_var, pat_eq) 
+                              (17, Not_found)
+        val call_deps = ref []
+        val paths = ref []
+        val insidefunbindings = HashTable.mkTable (hash_fn o (Var.toString) o pat_var, pat_eq) (17, Not_found)
 
 				(* Constraints with additional frames given by user or third party tools *)
 				(* val cs = (List.map ((Le.maplistfilter (mfm fenv) ifenv), (lbl_dummy_cstr))) @ cs *)

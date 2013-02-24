@@ -2,22 +2,24 @@ structure RelConstraintgen (*: CONSTRAINTGEN *) =
 struct
   open Atoms
   open CoreML
-  open HashTable
   open Type_desc
   open Common
   (*open RelFrame*)
   (*open RelConstraint*)
   structure P = Predicate
   structure RP = RelPredicate
+  structure RQ = RelQualifier
   structure C = Common
   structure Cf = Control
   structure Cs = Constraint
+  structure RCs = RelConstraint
   structure B = Builtin
   structure RB = RelBuiltin
   structure Le = Lightenv
   structure RLe = RelLightenv
   structure F = Frame
   structure RF = RelFrame
+  structure TM = TyconMap
 
   datatype error =
       NotSubtype of F.t * F.t
@@ -26,63 +28,9 @@ struct
   
   exception Error of (Exp.t option) * error
   exception Errors of (Exp.t option * error) list
+
   
   val hash_fn = HashString.hashString
-  
-  
-  fun pprint_debug ( fname :string )
-               (ret_cs : Cs.frame_constraint list)
-               (env : Le.t)
-               (guard : Cs.guard_t)
-               (belong_pat : Pat.t)
-               (call_deps : ((Pat.t * Pat.t) list) ref)
-               (paths : ((Pat.t*P.pexpr*P.t*bool) list) ref)
-               (polymatching_table (*: (Var.t, Var.t) HashTable.t*)) =
-  let
-    val _ = print ( "\n\n-----------  DATA RETURNED BY "^fname^" ---------\n")
-    val _ = print "--- 1. Constraints --\n"
-    val _ = List.fold (ret_cs,(),
-              (fn(c,_) => (
-                print (Constraint.pprint c);
-                print "\n"
-              ))
-            )
-    val _ = print "-- 2. LightEnv --\n"
-    val _ = print (Le.pprint_fenv_except (env,B.is_builtin))
-    val _ = print "-- 3. Guards --\n"
-    val _ = List.fold (guard,(),
-              (fn ((var,i,b),_) => (
-                  print ((Var.toString var)^" : "^(Int.toString i)^" : "^(Bool.toString b)^"\n")
-              ))
-            )
-    val _ = print "-- 4. BelongPat --\n"
-    val _ = print ((Pat.visitPat belong_pat)^"\n")
-    val _ = print "-- 5. Call Dependencis --\n"
-    val _ = List.fold (!call_deps,(),
-               (fn ((p1,p2),_) => (
-                 print ((Pat.visitPat p1)^" --> "^(Pat.visitPat p2)^"\n")
-               ))
-            )
-    val _ = print "-- 6. Path Encoding --\n"
-    val _ = List.fold (!paths,(),
-              (fn ((pat,pe,pred,bval),_) => (
-                print ("["^(Pat.visitPat pat)^"], ["^(P.pprint_pexpr pe)^
-                  "], ["^(P.pprint pred)^"], ["^(Bool.toString bval)^"]\n"
-                )
-              ))
-            )
-    val _ = print "-- 7. PolyMatching Table --\n"
-    val _ = HashTable.foldi
-              (fn ((frv1:Var.t),(frv2:Var.t),_) => (
-                print ((Var.toString frv1)^" --> "^(Var.toString frv2)^"\n")
-              ))
-              ()
-              polymatching_table
-    val _ = print "\n\n\n"
-  in
-    ()
-  end
-
 
   fun getFunctionAppName e = 
     case (Exp.node e) of 
@@ -90,92 +38,73 @@ struct
       | Exp.Var (var, _) => (Var.toString (var()))
       | _ => (print ("\nError expression considered as Var " ^ (CoreML.visitExp e) ^ "\n"); assertfalse ())
       
-  fun getFunctionApp e = 
-    case (Exp.node e) of 
-      Exp.App (e1, e2) => getFunctionApp e1
-      | Exp.Var (var, _) => (var(), Exp.ty e)
-      | _ => assertfalse ()
     
-  fun getFunctioinAppPat e = 
-    let val (var, ty) = getFunctionApp e
-    in
-      (Var.toString var, Pat.var (var, ty))
-    end
-    
-  fun getFunctionAppParam e paralist = 
-    case (Exp.node e) of 
-      Exp.App (e1, e2) =>  
-        ((case (Exp.node e2) of
-          Exp.Var (var, _) => List.push (paralist, var())
-          | Exp.Record r => 
-            let fun getFunctionAppRecordParam r =  
-                let val record_params = Vector.toListRev (Vector.map (Record.toVector(r), fn (a, b) => b))
-                in
-                  List.foreach (record_params, fn rp => 
-                    case (Exp.node rp) of
-                      Exp.Var (var, _) => List.push (paralist, var())
-                      | Exp.Record r' => getFunctionAppRecordParam r'
-                      | _ => assertfalse ()
-                  )
-                end
-            in
-              getFunctionAppRecordParam r
-            end
-          
-          | Exp.Const _ => List.push (paralist, Var.fromString "constvalue")
-          | _ => assertfalse ()
-        ); getFunctionAppParam e1 paralist)
-      | Exp.Var (var, _) => ()
-      | _ => assertfalse () 
-
-  val sumdatatypeTable : (Tycon.t, (Con.t * Type_desc.type_desc list) list) hash_table = 
-    mkTable ((HashString.hashString) o (Tycon.toString), Tycon.equals) (37, Common.Not_found)
-  
-  val datatypeTable : (Con.t, (Type_desc.type_desc * bool) list) hash_table = 
-    mkTable ((HashString.hashString) o (Con.toString), Con.equals) (37, Common.Not_found)
-
-
   fun type_desc exp = Type.toMyType (Exp.ty exp)
 
-  val defaultCons = Con.newString "any"
+  val defaultCons = Con.defaultCons
+
+  val tycon_map = TM.new_tycon_map()
+
+  fun filter_conargs e2 = 
+    let
+      fun filter_exp e = (case (Exp.node e) of
+          Exp.Var (v,_) =>e
+        | Exp.Const f => e
+        | _ => (print ("Apply cons only on vars and consts\n");assertfalse()))
+      val (conargs: (Exp.t list)) = (case (Exp.node e2) of
+          Exp.Record r => 
+          let
+            val exp_list = Vector.toListMap (Record.toVector r,snd)
+          in
+            List.map (exp_list, filter_exp)
+          end
+        | _ => [filter_exp e2])
+
+    in
+      conargs
+    end
+
+  fun constexp_to_int e = (case (Exp.node e) of
+      (Exp.Const f) => (case (type_desc e) of
+          Tconstr (t, []) => 
+            if (Tycon.isIntX t) then
+              let val constval = f() in
+                case constval of 
+                     Const.IntInf n => SOME (IntInf.toInt n)
+               | Const.Word n => SOME (WordX.toInt n)
+               | _ => (print "toPredIntError\n"; assertfalse ())
+              end  		
+            else NONE
+        | _ => NONE)
+    | _ => fail "Const exp expected\n")
+
+  fun expr_to_relem_list e= 
+    let
+      val el = filter_conargs e
+    in
+      List.map (el,(fn(e) => case Exp.node e of
+          Exp.Var (v,_) => RP.RVar (RP.make_typedvar(v()))
+        | Exp.Const f => (case constexp_to_int e of 
+            SOME i => RP.RInt i
+          | NONE => fail "Only integer constants allowed\n")
+        ))
+    end
 
   fun expression_to_rexpr e =
     let 
-      fun constexp_to_int e = (case (Exp.node e) of
-          (Exp.Const f) => (case (type_desc e) of
-              Tconstr (t, []) => 
-                if (Tycon.isIntX t) then
-                  let val constval = f() in
-                    case constval of 
-                         Const.IntInf n => SOME (IntInf.toInt n)
-                   | Const.Word n => SOME (WordX.toInt n)
-                   | _ => (print "toPredIntError\n"; assertfalse ())
-                  end  		
-                else NONE
-            | _ => NONE))
     in
       case (Exp.node e) of
           Exp.Const f => (case (constexp_to_int e) of
               SOME i => RP.make_rset [RP.RInt i]
-            | NONE => RP.make_null_rset()
+            (* This is irrelevant as we will eventually have RTrue as pat refinement *)
+            | NONE => RP.make_dummy_rexpr() 
           )
         | Exp.Var (varf, _) => RP.make_rrel(defaultCons,RP.make_typedvar(varf()))
         | Exp.App (e1, e2) => (case ((type_desc e),(Exp.node e1)) of
               (Tconstr (tycon,tdlist), Exp.Con (c,_)) =>
                 (let
-                  val (flags:(bool list)) = List.map ((HashTable.lookup datatypeTable c), (fn(x,y)=>y)) 
-                  fun filter_exp e = (case (Exp.node e) of
-                      Exp.Var (v,_) =>e2
-                    | Exp.Const f => e2
-                    | _ => (print ("Apply cons only on vars and consts\n");assertfalse()))
-                  val (conargs: (Exp.t list)) = (case (Exp.node e2) of
-                      Exp.Record r => 
-                      let
-                        val exp_list = Vector.toListMap (Record.toVector r,snd)
-                      in
-                        List.map (exp_list, filter_exp)
-                      end
-                    | _ => [filter_exp e2])
+                  val (flags:(bool list)) = List.map ((TM.get_argtys_by_cstr tycon_map c), (fn(x,y)=>y)) 
+                  val conargs = filter_conargs e2
                   val _ = if (not (List.length flags = List.length conargs))then
                       (print ("Constructor application pattern mismatch\n");assertfalse())
                     else ()
@@ -188,9 +117,9 @@ struct
                       end
                     | Exp.Const f => (case (constexp_to_int e) of
                           SOME i => ((RP.RInt i)::l1,l2)
-                        | NONE => (print ("only ints allowed in constructor args\n");assertfalse())
+                        | NONE => (print ("Constructor args error\n");assertfalse())
                       )
-                    | _ => assertfalse()
+                    | _ => fail "Constructor args should contain only atoms\n"
 
                   )
                   val (l1,l2) = List.fold2(conargs,flags,([],[]),separate)
@@ -198,9 +127,9 @@ struct
                 in
                   set
                 end)
-            | _ => RP.make_null_rset()
+            | _ => RP.make_dummy_rexpr()
           )
-        | _ =>  RP.make_null_rset()
+        | _ =>  RP.make_dummy_rexpr()
     end
   
   (* constant to PInt; variable to PVar *)
@@ -278,7 +207,7 @@ struct
       | _ => (print ("\nUnspported expression when matchcase " ^ (CoreML.visitExp e) ^ "\n"); assertfalse ())
   
   (* Remember generated frames *)		                           
-  val flogs : (string, Frame.t) hash_table = HashTable.mkTable (HashString.hashString, (op =)) (101, Not_found)                             
+  val flogs : (string, Frame.t) HashTable.hash_table = HashTable.mkTable (HashString.hashString, (op =)) (101, Not_found)                             
                                   
   (* Remember a frame *)
   fun log_frame exp fr = HashTable.insert flogs (visitExp exp,fr)
@@ -310,6 +239,19 @@ struct
      constraints are tagged with belong_pat 
      The other place is constrain_and_bind when
      rhs of binding is a recursive function. *)
+  fun label_rconstraint exp rfc = 
+    let val og = case (Exp.node exp) of
+        Exp.App (e1, e2) => (case (Exp.node e1) of 
+                  (Exp.Var (var, targs)) => if (String.compare (Var.toString (var ()), "assert") = EQUAL)
+                            then RCs.RAssert exp
+                            else RCs.RLoc (SOME exp)
+                | _ => RCs.RLoc (SOME exp))
+      | _ => RCs.RLoc (SOME exp)
+    in 
+      RCs.lc {lc_cstr = rfc, lc_orig = og, 
+      lc_id = Constraint.fresh_fc_id()}  (* use same id generator *)
+    end
+
   fun label_constraint exp belong_pat fc = 
     let val og = case (Exp.node exp) of
         Exp.App (e1, e2) => (case (Exp.node e1) of 
@@ -319,8 +261,8 @@ struct
                 | _ => Constraint.Loc (SOME exp))
       | _ => Constraint.Loc (SOME exp)
     in Constraint.lc {lc_cstr = fc, lc_orig = og, lc_id = Constraint.fresh_fc_id(), lc_binding = belong_pat}  end
-  
-  (* Find is function is a real recursive function *)
+	
+		(* Find is function is a real recursive function *)
   fun isRecursiveFun bodyExp funvar = 
     let val recflag = ref false
     in
@@ -329,71 +271,29 @@ struct
                         else ())
       ); !recflag)
     end
-    
-		fun cacheDataType v = (* set of mutually recursive datatype definitions *)
-			Vector.foreach (v, 
-            (fn {cons, tycon, tyvars} => 
-                let
-                  val mydatatype = Tconstr (tycon, Vector.toListMap (tyvars,fn(v)=>(Tvar v)))
-                in
-                  ( print "\nassert cacheDataType\n"; 
-                    print ("Tycon is " ^ (Tycon.toString tycon) ^ "\n");
-                    Vector.foreach (cons, fn {arg, con} => (
-                      print ("Constructor is " ^ (Con.toString con) ^ "\n");
-                      print ("Arg is " ^ (case arg of SOME arg => CoreML.visitType arg | NONE => "NONE") ^ "\n")
-                    ));
-                    
-                    Vector.foreach (cons, (fn {arg, con} => 
-                        let 
-                          val tef_list = case arg of 
-                            NONE => []
-                          | SOME t => 
-                            let 
-                              val nt = Type.toMyType t 
-                            in
-                              case (nt) of
-                                  Ttuple li => 
-                                    List.map (li, fn (Tfield (_, t')) => (t',Type_desc.sametype(t',mydatatype))
-                                                  | _ => (print "\nUnknow Type\n"; assertfalse ()))
-                                | _ => [(nt,Type_desc.sametype(nt,mydatatype))]
-                            end
-                          val te_list = List.map (tef_list, fn(x,y)=>x)
-                        in
-                          HashTable.insert datatypeTable (con, (tef_list));
-                          if (HashTable.inDomain sumdatatypeTable tycon) then
-                            let val existings = HashTable.lookup sumdatatypeTable tycon
-                            in HashTable.insert sumdatatypeTable (tycon, (con, te_list) :: existings) end
-                          else
-                            HashTable.insert sumdatatypeTable (tycon, [(con, te_list)])
-                        end
-                         ))
-                              
-                  )
-                end
-                ))
 
-      fun getConIndex con ty = 
-        let val tyc = Type.deConOpt ty
-        in
-          case tyc of
-            SOME (tyc, _) => 
-              if (HashTable.inDomain sumdatatypeTable tyc) then
-                let val con_te_list = HashTable.lookup sumdatatypeTable tyc
-                in
-                  case (List.index (con_te_list, fn (c, _) => Con.equals (c, con))) of
-                    SOME index => index
-                    | NONE => (print "\nCannot find the index of current constructor encoutered in its constructor list\n"; assertfalse ())
-                end
-              else (* there could be built-in constructors*) if (String.equals (Con.toString con, "::")) then 1
-              else (print ("\nCannot get constructors list in which current construnctor encountered is in " ^ (Con.toString con) ^ "\n"); assertfalse ())
-            | NONE => (print ("\nCannot get tycon from the constructor's type " ^ (Con.toString con) ^ "\n"); assertfalse ())
-        end
-       
-      fun pat_var pat = case (Pat.node pat) of 
-        Pat.Var var => var 
-        | Pat.Wild => Var.mk_ident ""
-        | _ => (print "\nCannot get variable from given pat\n"; assertfalse ())
-        
+  fun getConIndex con ty = 
+    let val tyc = Type.deConOpt ty
+    in
+      case tyc of
+        SOME (tyc, _) => 
+          if (TM.tycon_mem tycon_map tyc) then
+            let val con_te_list = TM.get_tycon_def tycon_map tyc
+            in
+              case (List.index (con_te_list, fn (c, _) => Con.equals (c, con))) of
+                SOME index => index
+                | NONE => (print "\nCannot find the index of current constructor encoutered in its constructor list\n"; assertfalse ())
+            end
+          else (* there could be built-in constructors*) if (String.equals (Con.toString con, "::")) then 1
+          else (print ("\nCannot get constructors list in which current construnctor encountered is in " ^ (Con.toString con) ^ "\n"); assertfalse ())
+        | NONE => (print ("\nCannot get tycon from the constructor's type " ^ (Con.toString con) ^ "\n"); assertfalse ())
+    end
+   
+  fun pat_var pat = case (Pat.node pat) of 
+    Pat.Var var => var 
+    | Pat.Wild => Var.mk_ident ""
+    | _ => (print "\nCannot get variable from given pat\n"; assertfalse ())
+    
   fun pat_vars pat = 
     case (Pat.node pat) of 
       Pat.Wild => [Var.mk_ident ""]
@@ -418,9 +318,11 @@ struct
           | _ => false
 
   (* returns true if the expty is a basic type or exp is assertfalse*)
-  fun is_not_relation exp ty = case (Exp.node exp, type_desc ty) of
-      (_,Tconstr(tycon,tyargs)) => not (HashTable.inDomain sumdatatypeTable tycon)
-      (Exp.App(Exp.Var (var,_)),e2) => (String.compare (Var.toString (var ()), "assertfalse") = EQUAL)
+  fun is_not_relation exp ty = case (exp, ty) of
+      (_,Tconstr(tycon,tyargs)) => not (TM.tycon_mem tycon_map tycon)
+    | (Exp.App(e1,e2),_) => (case Exp.node e1 of 
+          Exp.Var (var,_) => (String.compare (Var.toString (var ()), "assertfalse") = EQUAL)
+        | _ => false)
     | _ => false
   
   (* Creates a new frame for given expression of given type. *)
@@ -428,15 +330,15 @@ struct
   fun expr_fresh desc ty = 
     if is_poly_instantiation desc then 
       (* unconstrained frame has Bottom refinement. *)
-      Frame.fresh_unconstrained ty sumdatatypeTable 
+      Frame.fresh_unconstrained ty tycon_map
     else 
-      Frame.fresh ty sumdatatypeTable 
+      Frame.fresh ty tycon_map
 
   fun rexpr_fresh desc ty = 
-    if is_not_relation desc ty then 
-      RF.fresh_unconstrained ty sumdatatypeTable 
+    if (is_not_relation desc ty) then 
+      RF.fresh_unconstrained ty tycon_map
     else 
-      RF.fresh ty sumdatatypeTable 
+      RF.fresh ty tycon_map
           
   (* lm as Lam {arg, argType, body = Exp {ty = bodyType, ...}, ...} *)
   (*
@@ -447,7 +349,7 @@ struct
    *@param paths is the path encoding of the program
    *@return a tuple of (fenv, cstrs, binding_table, call_deps, binding_frame)
    *)
-  fun constrain_structure initfenv initrenv guard pdecs polymatching_table =
+  fun constrain_structure initfenv initrenv guard pdecs (polymatching_table : (Var.t,Var.t) HashTable.hash_table) =
     let 
       fun constrain_rec fenv renv guard cstrs rstrs pdecs =
         let
@@ -458,28 +360,32 @@ struct
               val body = #body lm'
               val bodyType = Exp.ty body
               val fpat = (Pat.var (var', Type.arrow (argType, bodyType)))
+              val rec_flag = isRecursiveFun body var'
             in
-              (fpat, (Exp.lambda lm))
+              ((fpat, (Exp.lambda lm)),rec_flag)
             end
         in
           case pdecs of 
             [] => (fenv, renv, cstrs, rstrs) 
           | (Dec.Datatype v) :: pdecs' => 
-                let val _ = cacheDataType v in
+                let val _ = TM.bind_datatypes tycon_map v in
                   constrain_rec fenv renv guard cstrs rstrs pdecs'
                 end
           | (Dec.Exception ca) :: pdecs' => constrain_rec fenv renv guard cstrs rstrs pdecs' 
           | (Dec.Fun {decs, tyvars, ...}) :: pdecs' => 
               let
-                val	bindings = Vector.toListMap (decs, binder)
+                val	(bindings,rec_flags) = List.unzip (Vector.toListMap (decs, binder))
+                val rec_flag = case rec_flags of f::[] => f | _ => true (* More decs => mutually recursive functions *)
                 val (fenv, renv, cstrs', rstrs') 
-                    = constrain_bindings fenv renv guard true bindings polymatching_table
+                    = constrain_bindings fenv renv guard rec_flag bindings polymatching_table
               in
                 constrain_rec fenv renv guard (cstrs @ cstrs') (rstrs @ rstrs') pdecs'
               end
           | (Dec.Val {rvbs, tyvars, vbs, ...}) :: pdecs' =>
               let
-                val	rec_bindings = Vector.toListMap (rvbs, binder)
+                (* simplifying assumption : all val rec bindings are recursive *)
+                val	rec_bindings = List.map
+                    (Vector.toListMap (rvbs, binder),fst)
                 val (fenv, renv, cstrs1', rstrs1') = constrain_bindings fenv renv guard true rec_bindings polymatching_table
                 val bindings = (Vector.toListMap (vbs, (fn {exp=exp', pat=pat', ...} => ( (pat', exp')))))
                 val (fenv, renv, cstrs2', rstrs2') = constrain_bindings fenv renv guard false bindings polymatching_table
@@ -503,34 +409,40 @@ struct
                   (env, renv,[] ,[]), 
                   (constrain_and_bind guard polymatching_table)
                )
-    | true => (*(env,renv,[],[])*)
+    | true =>
       let 
         val exprs = List.map (bindings, (fn (a, b) => b))
         val pats = List.map (bindings, (fn (a, b) => a))
-        val bindings = List.map (bindings, (fn (p, e) => (p, e, expression_to_pexpr e)))
-        val unlabeled_frames = List.map (exprs, (fn e => RF.fresh (Type.toMyType (Exp.ty e)) sumdatatypeTable))
-        val unlabeled_env = bind_all bindings unlabeled_frames env
-        val (label_frames,_,label_rframes,_) = constrain_subexprs_stub unlabeled_env 
-                                                   guard 
-                                                   exprs 
-                                                   pats 
-                                                   polymatching_table
-          
-        val binding_frames = List.map2 (unlabeled_frames, label_frames, (fn (a, b) => RF.label_like a b))		            
+        val fbindings = List.map (bindings, (fn (p, e) => (p, e, expression_to_pexpr e)))
+        val rbindings = List.map (bindings, (fn (p, e) => (p, e, expression_to_rexpr e)))
+        val unlabeled_frames = List.map (exprs, (fn e => F.fresh (Type.toMyType (Exp.ty e)) tycon_map))
+        val unlabeled_rframes = List.map (exprs, (fn e => RF.fresh (Type.toMyType (Exp.ty e)) tycon_map))
+        val unlabeled_env = bind_all fbindings unlabeled_frames env
+        val unlabeled_renv = rbind_all rbindings unlabeled_rframes renv
+        val (label_frames,_,label_rframes,_) = constrain_subexprs_stub unlabeled_env unlabeled_renv 
+                                                   guard exprs polymatching_table
+        val binding_frames = List.map2 (unlabeled_frames, label_frames, (fn (a, b) => F.label_like a b)) 
+        val binding_rframes = List.map2 (unlabeled_rframes, label_rframes, (fn (a, b) => RF.label_like a b)) 
         (* Redo constraints now that we know what the right labels are *)
-        val bound_env = bind_all bindings binding_frames env
-        val (found_frames, subexp_cstrs) = constrain_subexprs bound_env guard exprs 
-            belong_pat pats	binding_table call_deps binding_frame paths	insidefunbindings freevars totalvars polymatching_table	
-        fun make_cstr fc pat = lc {lc_cstr = fc, lc_orig = Loc NONE, lc_id = fresh_fc_id (), lc_binding = pat}
-        fun build_found_frame_cstr_list (found_frame, binding_f, pat, cs) =
-            make_cstr (RWFFrame (bound_env, binding_f)) pat ::
-            make_cstr (RSubFrame (bound_env, guard, found_frame, binding_f)) pat :: cs
-        val ret_cs = (List.fold3 (found_frames, binding_frames, pats, [], build_found_frame_cstr_list)) @ subexp_cstrs
+        val bound_env = bind_all fbindings binding_frames env
+        val bound_renv = rbind_all rbindings binding_rframes renv
+        val bound_rel_env = (bound_env,bound_renv,guard)
+        val (found_frames, found_rframes, subexp_cstrs, subexp_rstrs) = 
+            constrain_subexprs bound_env bound_renv guard exprs polymatching_table	
 
+        fun make_cstr fc pat = Cs.lc {lc_cstr = fc, lc_orig = Cs.Loc NONE, lc_id = Cs.fresh_fc_id (), lc_binding = pat}
+        fun make_rstr fc pat = RCs.lc {lc_cstr = fc, lc_orig = RCs.RLoc NONE, lc_id = Cs.fresh_fc_id ()}
+        fun build_found_frame_cstr_list (found_frame, binding_f, pat, cs) =
+            make_cstr (Cs.WFFrame (bound_env, binding_f)) pat ::
+            make_cstr (Cs.SubFrame (bound_env, guard, found_frame, binding_f)) pat :: cs
+        fun build_found_frame_rstr_list (found_rframe, binding_rf, pat, rcs) =
+            make_rstr (RCs.WFRFrame (bound_rel_env, binding_rf)) pat ::
+            make_rstr (RCs.SubRFrame (bound_rel_env, found_rframe, binding_rf)) pat :: rcs
       in 
-        (bound_env, (List.fold3 (found_frames, binding_frames, pats, [], build_found_frame_cstr_list)) @ subexp_cstrs) 
+        (bound_env, bound_renv, 
+        (List.fold3 (found_frames, binding_frames, pats, [], build_found_frame_cstr_list)) @ subexp_cstrs,
+        (List.fold3 (found_rframes, binding_rframes, pats, [], build_found_frame_rstr_list)) @ subexp_rstrs) 
       end
-  
   
   (*
    * If pexpr is a function call, and pat is a tuple/record, we name a distinct variable for this pat. And bing it in the env.
@@ -550,11 +462,12 @@ struct
 
   and rbind renv pat rframe rexpr =
   let
-    val renv = RF.env_bind renv (Pat.node pat) rframe
+    val renv = RLe.env_bind renv pat rframe rexpr tycon_map
   in
     if (Pattern.is_deep pat) then
       RLe.add (Var.mk_ident "pattern")
-        (RB.mk_poly [(Var.mk_ident "pat", Var.mk_ident "pat", RelPattern.desugar_bind pat pexpr)])
+        (RB.mk_poly [(Var.mk_ident "pat", Var.mk_ident "pat", 
+          Pattern.desugar_rbind pat rexpr tycon_map)])
         renv
     else
       renv
@@ -608,68 +521,38 @@ struct
       val renv_copy = RLe.copy renv
       val (f, rf, cstrs',rstrs') = constrainExp e env_copy renv_copy guard polymatching_table
       val rexpr = expression_to_rexpr e
-      val pexpre = expression_to_pexpr e
-      val (env,renv) = tbind env renv pat f rf pexpr rexpr
+      val pexpr = expression_to_pexpr e
+      val env = tbind env pat f pexpr
+      val renv = rbind renv pat rf rexpr
     in 
       (env, renv, cstrs @ cstrs', rstrs @ rstrs')
       (*(env,renv,cstrs,rstrs)*)
     end
   
   and bind_all bindings fs env = List.foldr2 (bindings, fs, env, (fn ((p, e, px), f, env) => tbind env p f px))
+
+  and rbind_all bindings rfs renv = 
+    List.foldr2 (bindings, rfs, renv, (fn ((p, e, rx), rf, renv) => rbind renv p rf rx))
   
-  and constrain_subexprs env 
-                         guard 
-                         es 
-                         belong_pat 
-                         pats 
-                         binding_table 
-                         call_deps 
-                         binding_frame 
-                         paths 
-                         insidefunbindings 
-                         freevars 
-                         totalvars 
-                         polymatching_table = 
-    if ((List.length pats) = 0) then
-      List.foldr (es, ([], []), (fn (e, (fs, cs)) 
-        => let val (f, cs') = constrainExp e 
-                                          env 
-                                          guard 
-                                          belong_pat 
-                                          binding_table 
-                                          call_deps 
-                                          binding_frame 
-                                          paths 
-                                          insidefunbindings
-                                          freevars 
-                                          totalvars 
-                                          polymatching_table 
-            in (f :: fs, cs' @ cs) end))
-    else 
-      List.foldr2 (pats, es, ([], []), (fn (pat, e, (fs, cs)) 
-        => let val patty = Pat.ty pat
-               val (f, cs') = if (Type.isArrow patty) then 
-                        constrainExp e (Lightenv.copy env) guard pat binding_table call_deps binding_frame paths insidefunbindings
-                          freevars totalvars polymatching_table (* function : new belong_pat *) 
-                        else
-                    (print "recursive expr cannot have any type besides function type"; 
-                     assertfalse ()) (* non function : depend on toplevel flag *)
-          in
-             HashTable.insert binding_table (pat, e);
-             HashTable.insert binding_frame (pat, f);
-             (*print ("\n&&&&" ^ (Frame.pprint f) ^ "\n");*)
-             (f :: fs, cs' @ cs)
-          end   		
-          ))
-  and constrain_nullary_constructed expty f = case f of
-      RFconstr(tycon,tyargfs,_) => 
-      let
-        val rexp = RP.make_null_rset ()
-        val qual = RB.equality_qualifier defaultCons rexp
-        val refn = RF.RQconst [qual]
-      in
-        RFconstr(tycon,tyargfs,refn)
-      end
+  and constrain_subexprs env renv guard es polymatching_table = 
+      List.foldr (es, ([], [], [], []), (fn (e, (fs, rfs, cs, rcs)) 
+        => let val (f, rf, cs', rcs') = constrainExp e env renv guard polymatching_table 
+            in (f :: fs, rf::rfs, cs' @ cs, rcs' @ rcs) end))
+
+  and constrain_nullary_constructed expty rf = case rf of
+      RF.RFconstr(tycon,tyargfs,_) => 
+      if(TM.tycon_mem tycon_map tycon) then
+        let
+          val rexp = RP.make_null_rset ()
+          val qual = RQ.equality_qualifier defaultCons rexp
+          val refn = RF.fresh_refinement qual
+        in
+          RF.RFconstr(tycon,tyargfs,refn)
+        end
+      else
+        (* if tycon not in table, then rf already should have empty refinement *)
+        rf
+    | _ => fail("Non constr frame for type constructor\n")
 
   and constrainExp e env renv guard polymatching_table = 
   let 
@@ -678,246 +561,188 @@ struct
     val tyy = type_desc e
     (* lo and behold, for a new frame is born! *)
     val environment = (env, guard, expr_fresh desc tyy)
-    val renvironment = (renv, guard, rexpr_fresh desc tyy
+    val renvironment = (renv, guard, rexpr_fresh desc tyy)
     val (f, rf, cstrs, rstrs, rec_cstrs, rec_rstrs) = case desc of
-        (   Exp.Const f) =>
-            let 
-              val(f,cstrs,rec_cstrs) =  constrain_constant (f())
-              val rf = RF.fresh_unconstrained tyy sumdatatypeTable 
-            in
-              (f,rf,cstrs,[],rec_cstrs,[])
-            end
-          | Exp.Con (c, targs) => (* case of unary constructors being rhs of binding *)
-              let
-                val (f,cstrs,rec_cstrs) = (case (Con.toString c) of
-                    "true" => (F.Fconstr (Tycon.bool, [], Frame.fresh_true ()), [], [])
-                  | "false" => (F.Fconstr (Tycon.bool, [], Frame.false_refinement), [], []) 
-                  |_  => (print ("\nconstructor frame generating error"); assertfalse ()))(* "nil", "ref" is not currently supported *)
-                val rpred = RP.requals ()
-                val rf = constrain_nullary_constructed tyy (#3 renvironment)
-              in
-                (f, rf, cstrs,[], rec_cstrs, [])
-              end
-          | Exp.Record r => constrain_record environment renvironment (Record.toVector(r)) polymatching_table
-          | Exp.Case {rules, test, ...} => 
-            let
-              val rlist = Vector.toListMap (rules, (fn {exp, pat, ...} => (pat, exp)))
-            in
-              constrain_match environment renvironment test rlist polymatching_table
-            end 
-          | Exp.Var (var, targs) => constrain_identifier environment renvironment (var()) e polymatching_table   
-
-          (* All primary operators like <,>,<= etc are also Exp.App *)
-          (*| Exp.App (e1, e2) => (case (Exp.node e1) of 
-              (Exp.Con (c, targs)) => 
-              let
-                val e2list = case (Exp.node e2) of Exp.Record e2 => (Vector.toListMap ((Record.toVector e2), (fn (a, b) => b)))
-                                | _ => [e2]
-                val tycon1 = case tyy of Type_desc.Tconstr (tyc, _) => tyc | _ => (print "\nIll constructor\n"; assertfalse ()) 
-                val tylist = List.map (HashTable.lookup datatypeTable c handle Not_found => [],
-                    (fn(x,y)=>x)) (* built-in constructor *)
-                val t = Tconstr (tycon1, tylist)
-                val sumf = #3 environment
-                val f = case sumf of
-                  F.Fsum (_, fs, _) => 
-                    let val f = List.peek (fs, fn (c', f) => Con.equals (c, c'))
-                      val f =  case f of SOME (_,f) => f | NONE => (print "\nIll type from a datatype\n"; assertfalse ())
-                    in Frame.unfoldRecursiveFrame f tycon1 fs end
-                  | F.Fconstr (tcc, fls, r) => 
-                    if (String.equals ("::", Con.toString c)) then F.Fconstr (tcc, (List.first fls :: fls), r) (* This is considered as unsafe *)
-                    else sumf
-                  | _ => (print "\nIll sum type from a datatype\n"; assertfalse ())	      								
-              in
-                constrain_constructed (env, guard, f) 
-                                      t 
-                                      e2list 
-                                      belong_pat 
-                                      binding_table 
-                                      call_deps 
-                                      binding_frame 
-                                      paths 
-                                      insidefunbindings 
-                                      freevars 
-                                      totalvars 
-                                      polymatching_table
-              end
-            | (Exp.Var (var, targs)) => if (String.compare (Var.toString (var ()), "assert") = EQUAL) then
-                            constrain_assert environment e2 belong_pat binding_table call_deps binding_frame paths insidefunbindings
-                              freevars totalvars polymatching_table
-                          else if (String.compare (Var.toString (var ()), "assertfalse") = EQUAL) then
-                            constrain_assertfalse environment
-                          (*else if (String.compare (Var.toString (var ()), "fromList_0") = EQUAL)
-                              then case (Exp.node e2) of elements => constrain_array environment elements
-                                             | _ => assertfalse ()
-                              else*) 
-                          else if (String.compare (Var.toString (var ()), "&&") = EQUAL orelse 
-                               String.compare (Var.toString (var ()), "||") = EQUAL ) then
-                            case (Exp.node e2) of
-                              Exp.Record e2 =>
-                                let val funname = Var.toString (var ())
-                                  val lr = Vector.toListMap ((Record.toVector e2), (fn (a, b) => b))
-                                  val l = List.first lr
-                                  val r = List.last lr
-                                  val (fl, cstr1) = constrainExp l env guard belong_pat binding_table call_deps
-                                        binding_frame paths insidefunbindings freevars totalvars polymatching_table
-                                  val (fr, cstr2) = constrainExp r env guard belong_pat binding_table call_deps
-                                        binding_frame paths insidefunbindings freevars totalvars polymatching_table
-                                  val pl = case fl of 
-                                    F.Fconstr (a, b, (subs,F.Qconst[(v1,v2,P.Iff (v3,p))])) => 
-                                  if Predicate.logic_equals_pexp v3 (B.tag (P.PVar v2)) then 
-                                    (Predicate.apply_substs subs p)
-                                  else (print "Error: assert unknown frame encountered."; assertfalse ())
-                                | _ => (print "Error: assertion ill formed "; print (Frame.pprint fl); assertfalse ())
-                              val pr = case fr of 
-                                F.Fconstr (a, b, (subs,F.Qconst[(v1,v2,P.Iff (v3,p))])) => 
-                                  if Predicate.logic_equals_pexp v3 (B.tag (P.PVar v2)) then 
-                                     (Predicate.apply_substs subs p)
-                                  else (print "Error: assert unknown frame encountered."; assertfalse ())
-                                | _ => (print "Error: assertion ill formed "; print (Frame.pprint fr); assertfalse ())
-                                in
-                                  if (String.equals (funname, "&&")) then
-                                    (Builtin.and_frame pl pr, [], cstr1 @ cstr2)
-                                  else
-                                    (Builtin.or_frame pl pr, [], cstr1 @ cstr2)
-                                end
-                              | _ => (print "\nassertion && || syntax ill-formed\n"; assertfalse ())	
-                          else if (String.compare (Var.toString (var ()), "not") = EQUAL) then
-                            let val (f, cstr) = constrainExp e2 env guard belong_pat binding_table call_deps
-                                        binding_frame paths insidefunbindings freevars totalvars polymatching_table
-                              val p = case f of 
-                                F.Fconstr (a, b, (subs,F.Qconst[(v1,v2,P.Iff (v3,p))])) => 
-                              if Predicate.logic_equals_pexp v3 (B.tag (P.PVar v2)) then 
-                                (Predicate.apply_substs subs p)
-                              else (print "Error: not unknown frame encountered in not app."; assertfalse ())
-                            | F.Fconstr (a, b, (subs, F.Qconst[(v1,v2,P.Atom (v3, P.Eq, bf))])) =>
-                              if (Predicate.logic_equals_pexp v3 (P.PVar v2)) then
-                                (P.Iff (bf, P.True))
-                              else (print "Error: not unknown frame with boolean expression."; assertfalse ())
-                            | _ => (print "Error: assertion ill formed in not app"; print (Frame.pprint f); assertfalse ())
-                            in
-                              (Builtin.not_frame p, [], cstr)
-                            end
-                          else constrain_application environment 
-                                                     e1 
-                                                     e2 
-                                                     belong_pat 
-                                                     binding_table 
-                                                     call_deps 
-                                                     binding_frame 
-                                                     paths 
-                                                     insidefunbindings 
-                                                     freevars 
-                                                     totalvars 
-                                                     polymatching_table
-            | _ => constrain_application environment e1 e2 belong_pat binding_table call_deps binding_frame paths insidefunbindings
-                freevars totalvars polymatching_table)
-        | Exp.Let (ds, e) => constrain_let environment 
-                                          (Vector.toList ds) 
-                                          e 
-                                          belong_pat 
-                                          binding_table 
-                                          call_deps 
-                                          binding_frame 
-                                          paths 
-                                          insidefunbindings
-                                          freevars 
-                                          totalvars 
+        Exp.Const f =>
+        let 
+          val(f,rf) =  constrain_constant (f())
+        in
+          (f,rf,[],[],[],[])
+        end
+      | Exp.Con (c, targs) => (* case of unary constructors being rhs of binding *)
+          let
+            val (f,rf) = (case (Con.toString c) of
+                "true" => (F.Fconstr (Tycon.bool, [], Frame.fresh_true ()), RB.uBool)
+              | "false" => (F.Fconstr (Tycon.bool, [], Frame.false_refinement), RB.uBool) 
+              |_  => (#3 environment, (constrain_nullary_constructed tyy (#3 renvironment))))
+          in
+            (f, rf,[],[],[], [])
+          end
+      | Exp.Record r => constrain_record environment renvironment (Record.toVector(r)) polymatching_table
+      | Exp.Case {rules, test, ...} => 
+        let
+          val rlist = Vector.toListMap (rules, (fn {exp, pat, ...} => (pat, exp)))
+        in
+          constrain_match environment renvironment test rlist polymatching_table
+        end 
+      | Exp.Var (var, targs) => constrain_identifier environment renvironment (var()) e polymatching_table   
+      | Exp.App (e1, e2) => (case (Exp.node e1) of 
+          (Exp.Con (c, targs)) => 
+          let
+            val e2list = filter_conargs e2
+            val tycon1 = case tyy of Type_desc.Tconstr (tyc, _) => tyc | _ => fail "\nIll constructor\n"
+            val tylist = List.map (TM.get_argtys_by_cstr tycon_map c handle Not_found => [],fst)
+            val t = Tconstr (tycon1, tylist)
+            val sumf = #3 environment
+            val f = case sumf of
+                F.Fsum (_, fs, _) => 
+                let val f = List.peek (fs, fn (c', f) => Con.equals (c, c'))
+                  val f =  case f of SOME (_,f) => f | NONE => (print "\nIll type from a datatype\n"; assertfalse ())
+                in Frame.unfoldRecursiveFrame f tycon1 fs end
+              | F.Fconstr (tcc, fls, r) => 
+                if (String.equals ("::", Con.toString c)) then F.Fconstr (tcc, (List.first fls :: fls), r) (* This is considered as unsafe *)
+                else sumf
+              | _ => (print "\nIll sum type from a datatype\n"; assertfalse ())	      								
+            val rf = #3 renvironment
+          in
+            constrain_constructed (env, guard, f) (renv, guard, rf) e t e2list polymatching_table
+          end
+        | (Exp.Var (var, targs)) => 
+          let
+            val rf = #3 renvironment
+            val resopt = 
+              if (String.compare (Var.toString (var ()), "assert") = EQUAL) then
+                SOME (constrain_assert environment renvironment e2 polymatching_table)
+              else if (String.compare (Var.toString (var ()), "assertfalse") = EQUAL) then
+                SOME (constrain_assertfalse environment renvironment)
+              else if (String.compare (Var.toString (var ()), "&&") = EQUAL orelse 
+                   String.compare (Var.toString (var ()), "||") = EQUAL ) then
+                case (Exp.node e2) of
+                  Exp.Record e2 =>
+                    let val funname = Var.toString (var ())
+                      val lr = Vector.toListMap ((Record.toVector e2), (fn (a, b) => b))
+                      val l = List.first lr
+                      val r = List.last lr
+                      val (fl,_, cstr1,_) = constrainExp l env renv guard polymatching_table
+                      val (fr,_,cstr2,_) = constrainExp r env renv guard polymatching_table
+                      val pl = case fl of 
+                          F.Fconstr (a, b, (subs,F.Qconst[(v1,v2,P.Iff (v3,p))])) => 
+                        if Predicate.logic_equals_pexp v3 (B.tag (P.PVar v2)) then 
+                          (Predicate.apply_substs subs p)
+                        else (print "Error: assert unknown frame encountered."; assertfalse ())
+                        | _ => (print "Error: assertion ill formed "; print (Frame.pprint fl); assertfalse ())
+                      val pr = case fr of 
+                        F.Fconstr (a, b, (subs,F.Qconst[(v1,v2,P.Iff (v3,p))])) => 
+                          if Predicate.logic_equals_pexp v3 (B.tag (P.PVar v2)) then 
+                             (Predicate.apply_substs subs p)
+                          else (print "Error: assert unknown frame encountered."; assertfalse ())
+                        | _ => (print "Error: assertion ill formed "; print (Frame.pprint fr); assertfalse ())
+                    in
+                      if (String.equals (funname, "&&")) then
+                        SOME (Builtin.and_frame pl pr, rf, [], [], cstr1 @ cstr2, [])
+                      else
+                        SOME (Builtin.or_frame pl pr, rf, [], [], cstr1 @ cstr2, [])
+                    end
+                  | _ => (print "\nassertion && || syntax ill-formed\n"; assertfalse ())	
+              else if (String.compare (Var.toString (var ()), "not") = EQUAL) then
+                let val (f,_,cstr,_) = constrainExp e2 env renv guard polymatching_table
+                  val p = case f of 
+                    F.Fconstr (a, b, (subs,F.Qconst[(v1,v2,P.Iff (v3,p))])) => 
+                    if Predicate.logic_equals_pexp v3 (B.tag (P.PVar v2)) then 
+                      (Predicate.apply_substs subs p)
+                    else (print "Error: not unknown frame encountered in not app."; assertfalse ())
+                  | F.Fconstr (a, b, (subs, F.Qconst[(v1,v2,P.Atom (v3, P.Eq, bf))])) =>
+                    if (Predicate.logic_equals_pexp v3 (P.PVar v2)) then
+                      (P.Iff (bf, P.True))
+                    else (print "Error: not unknown frame with boolean expression."; assertfalse ())
+                  | _ => (print "Error: assertion ill formed in not app"; print (Frame.pprint f); assertfalse ())
+                in
+                  SOME (Builtin.not_frame p, rf, [], [], cstr, [])
+                end
+              else NONE
+          in
+            (case resopt of
+                SOME p  => p
+              | NONE => constrain_application environment renvironment e1 e2 polymatching_table)
+          end
+        | _ => constrain_application environment renvironment e1 e2 polymatching_table)
+      | Exp.Let (ds, e) => constrain_let environment renvironment (Vector.toList ds) e polymatching_table
+      | Exp.List es => fail "List expression encountered\n"
+      | Exp.Seq es => constrain_sequence environment renvironment es polymatching_table
+      | Exp.Lambda l => constrain_lambda environment renvironment l 
                                           polymatching_table
-        | Exp.List es => constrain_list environment 
-                                        es 
-                                        belong_pat 
-                                        binding_table 
-                                        call_deps 
-                                        binding_frame 
-                                        paths 
-                                        insidefunbindings 
-                                        freevars 
-                                        totalvars 
-                                        polymatching_table
-        | Exp.Seq es => constrain_sequence environment es belong_pat binding_table call_deps binding_frame paths insidefunbindings
-                    freevars totalvars polymatching_table
-        | Exp.Lambda l => constrain_lambda environment 
-                                            l 
-                                            belong_pat 
-                                            binding_table 
-                                            call_deps 
-                                            binding_frame 
-                                            paths 
-                                            insidefunbindings
-                                            freevars 
-                                            totalvars 
-                                            polymatching_table
-        *)
-        | Exp.EnterLeave (e, si) => (print "We do not check EnterLeave"; assertfalse ())
-        | Exp.Handle {catch, handler, try} => (print "We don not check Handle"; assertfalse ())
-        | Exp.PrimApp {args, prim, targs} => (print "We do not check PrimApp"; assertfalse ())
-        | Exp.Raise e => (print "We do not check Raise"; assertfalse ())
-        | _ => (assertfalse())
-      in 
-        log_frame e f; (f, (List.map (cstrs, (label_constraint e belong_pat))) @ rec_cstrs)
+      | Exp.EnterLeave (e, si) => fail "We do not check EnterLeave"
+      | Exp.Handle {catch, handler, try} => fail "We don not check Handle"
+      | Exp.PrimApp {args, prim, targs} => fail "We do not check PrimApp"
+      | Exp.Raise e => fail "We do not check Raise"
+      | _ => fail "unexpected expression\n"
+    in 
+      let
+        val dummy_pat = Pat.var (Var.fromString "dummymain", 
+          Type.var(Tyvar.newNoname {equality = false}))
+        val lcstrs = List.map (cstrs, (label_constraint e dummy_pat))
+        val lrstrs = List.map (rstrs, (label_rconstraint e))
+      in
+        log_frame e f; 
+        (f, rf, lcstrs @ rec_cstrs, lrstrs @ rec_rstrs)
       end
-  
-  (* rframes for constants are normal frames *)
-  and constrain_constant cons =
-    let
-      val cs = (case cons of 
-           Const.IntInf n => 
-            ((B.mk_int [B.equality_qualifier (P.PInt (IntInf.toInt n))], [], []))
-         | Const.Null => (B.uUnit, [], [])
-         | Const.Real _ => (B.uFloat, [], [])
-         | Const.Word n => 
-            (B.mk_int [B.equality_qualifier (P.PInt (IntInf.toInt (WordX.toIntInfX n)))], [], [])
-         | Const.WordVector _ => assertfalse ()
-       )
-    in
-      cs
     end
+  
+  (* rframes for constants are frames with no refinement *)
+  and constrain_constant cons = (case cons of 
+         Const.IntInf n => 
+         let
+          val rf = RB.uInt
+          val f = B.mk_int [B.equality_qualifier (P.PInt (IntInf.toInt n))]
+         in
+          (f,rf)
+         end
+       | Const.Null => (B.uUnit, RB.uUnit)
+       | Const.Real _ => (B.uFloat, RB.uFloat)
+       | Const.Word n => 
+          (B.mk_int [B.equality_qualifier (P.PInt (IntInf.toInt (WordX.toIntInfX n)))], RB.uInt)
+       | Const.WordVector _ => assertfalse ()
+     )
   
   (* 
    * By constructor here, we temporarily do not consider constructor for list or array.
    * Parameter cstrdesc is the type of the constructor
    * Parameter args is the parameters of this constructor
    *)
-  and constrain_constructed (env, guard, f) 
-                            cstrdesc 
-                            args 
-                            belong_pat 
-                            binding_table 
-                            call_deps 
-                            binding_frame 
-                            paths 
-                            insidefunbindings 
-                            freevars 
-                            totalvars 
-                            polymatching_table =
+  and constrain_constructed (env, guard, f) (renv,_,rf) e cstrdesc args polymatching_table =
     case f of
       F.Fconstr (path, tyargframes, refn) =>
-        let (* Seeking the formal types of arguments *)
-          val cstrargs = (*F.fresh_constructor cstrdesc f *)
-            case f of F.Fconstr (_, fl, _) => fl | _ => (print ("\nConstructor with ill type " ^ (Frame.pprint f) ^ "\n"); assertfalse ())
+        let 
+          val c = case Exp.node e of Exp.Con(c',_) => c' | _ => fail "." 
+          val tyargfs = case rf of RF.RFconstr (_,fs,_) => fs | _ => fail "RFconstr expected"
+          val rexpr = expression_to_rexpr e
+          val argsupfs = RF.fresh_constructor c tyargfs rexpr tycon_map
+          val refn = RF.fresh_refinement (RQ.equality_qualifier c rexpr)
+          val rf = case rf of RF.RFconstr (p,fs,_) => RF.RFconstr (p,fs,refn) | _ => fail ""
+          (* Seeking the formal types of arguments *)
+          val cstrargs = case f of 
+              F.Fconstr (_, fl, _) => fl 
+            | _ => fail ("\nConstructor with ill type " ^ (Frame.pprint f) ^ "\n")
           (* Seeking the actual types of args which are actuals *)
           val _ = print "go here0\n"
-          val (argframes, argcstrs) = constrain_subexprs env guard args belong_pat [] (* not pats for them *) 
-                          binding_table call_deps binding_frame paths insidefunbindings freevars totalvars polymatching_table
+          val (argframes,argsubfs,argcstrs,argrstrs) = 
+            constrain_subexprs env renv guard args polymatching_table
           val _ = print "go here\n"
-          val ret_cs = Cs.WFFrame(env, f) :: ((List.map2 (argframes, cstrargs, (fn (arg, formal) => Cs.SubFrame(env, guard, arg, formal)))) @ (lcstrs_to_fcstrs argcstrs))
-          val _ = pprint_debug "constrain_constructed"
-                               ret_cs
-                               env
-                               guard 
-                               belong_pat 
-                               call_deps 
-                               paths 
-                               polymatching_table
-
+          val rel_env = (env,renv,guard)
+          val rstrs = RCs.WFRFrame (rel_env,rf)::(List.map2 (argsubfs,argsupfs,
+            (fn (rsub,rsup) => RCs.SubRFrame(rel_env,rsub,rsup))))
         in
-            (f,
+            (* this should fail *)
+            (* cstr args are frames for tyargs of current type *)
+            (* argframes are frames of args of valcon. *)
+            (* subtyping among them isn't meaningful *)
+            (f,rf,
              Cs.WFFrame(env, f) :: (List.map2 (argframes, cstrargs, (fn (arg, formal) => Cs.SubFrame(env, guard, arg, formal)))),
-             argcstrs) end
-        | _ => assertfalse ()
+             rstrs,argcstrs,argrstrs) end
+        | _ => fail "Fconstr expected\n"
   
   and is_sum_type ty = case ty of
-      Tconstr(tycon,tyargs) => HashTable.inDomain sumdatatypeTable tycon
+      Tconstr(tycon,tyargs) => TM.tycon_mem tycon_map tycon
     | _ => false
 
   (* In this function, we first get the expression of all recored fields.
@@ -938,7 +763,7 @@ struct
            corresponding frames of sub-expressions *)
         fun subframe_field (fsub, (fsup, _), cs_rest) = (Cs.SubFrame (env, guard, fsub, fsup)) :: cs_rest 
         fun subrframe_field rel_env (rfsub, (rfsup,_),rcs_rest) = 
-          (RCs.RSubFrame (rel_env,rfsub,rfsup)) :: rcs_rest
+          (RCs.SubRFrame (rel_env,rfsub,rfsup)) :: rcs_rest
         val (ret_f, cur_cs) = case f of
             F.Frecord (recframes, _) => 
               let 
@@ -952,11 +777,11 @@ struct
               in
                 (ret_f, cur_cs)
               end
-            | _ => assertfalse ()
+            | _ => fail ("Expected record frame\n")
         val (ret_rf, cur_rcs) = case rf of
             RF.RFrecord (recrframes, _) => 
               let 
-                fun field_rqualifier_list ((_, name), fexpr) acc = 
+                (*fun field_rqualifier_list ((_, name), fexpr) acc = 
                 let
                   val ftype = type_desc fexpr
                 in
@@ -968,15 +793,19 @@ struct
                 val ref_rquals = List.fold2(recframes,sorted_exprs,[],field_rqualifier_list)
                 val refn = if(List.length ref_rquals > 0) 
                   then ([],RF.RQconst ref_rquals) 
-                  else RF.fresh_refinementvar RF.RBottom
+                  else RF.fresh_refinementvar RF.RBottom*)
+                (* CURRENTLY IGNORING RECORDS *)
+                (* To handle records, relem should include pexprs *)
+                val refn = RF.empty_refinement
                 val ret_rf = RF.RFrecord (recrframes,refn)
                 val rel_env = (env,renv,guard)
-                val (cur_rcs : RCs.rframe_constraint list) = 
-                  RCs.WFRFrame (rel_env, rf) :: List.fold2 (subrframes, recrframes, [], subrframe_field rel_env)
+                (*val (cur_rcs : RCs.rframe_constraint list) = 
+                  RCs.WFRFrame (rel_env, rf) :: List.fold2 (subrframes, recrframes, [], subrframe_field rel_env)*)
+                val cur_rcs = []
               in
                 (ret_rf, cur_rcs)
               end
-            | _ => assertfalse ()
+            | _ => fail ("Expected record rframe\n")
     in
       (ret_f,ret_rf,cur_cs,cur_rcs,subexp_cs,subexp_rcs)
      end
@@ -994,23 +823,24 @@ struct
       (* guard updated with correct guard value *)
       val guard = (guardvar, i, true) :: guard
       val env = matchcase_tbind env pat matchf match_pexpr
-      val renv = bind_rexpr renv pat matchrf match_rexpr
       (* Now, env contains mapping bewteen  
          1. pat frame and matchf
          2. forevery pat' inside pat and
               for corresponding pexpr' inside matche
                 pat' -> pexpr'
        *)
-      val (fe, subcs) = constrainExp e env renv guard polymatching_table
+      val renv = rbind renv pat matchrf match_rexpr (*again, no spl treatment*)
+      val (fe, rfe, subcs, subrcs) = constrainExp e env renv guard polymatching_table
       (* generated constraints refer to extended env and updated guard *)
       val ret_cs = (Cs.SubFrame (env, guard, fe, f))::(lcstrs_to_fcstrs subcs)
+      val rel_env = (env,renv,guard)
     in 
-      (Cs.SubFrame (env, guard, fe, f), subcs) 
+      (Cs.SubFrame (env, guard, fe, f), RCs.SubRFrame (rel_env,rfe,rf), subcs, subrcs) 
     end
   
   (* e is the test; pexps are paris of (pat, exp) *)
   and constrain_match (environment as (env, guard, f)) 
-                      (renvironment as (renv,guard,rf))
+                      (renvironment as (renv,_,rf))
                       e (* this is test *)
                       pexps (* (pat,expr) list *)
                       polymatching_table =
@@ -1043,21 +873,21 @@ struct
               Pat.Con {arg=arg',con=con',targs=targs'} => 
               let
                 val grd' = (case Con.toString (con') of
-                    "true" => grd2
-                  | "false" => grd3
-                  | _ => (print "bool cons not in true|false\n";assertfalse())
+                    "true" => guard2
+                  | "false" => guard3
+                  | _ => fail "bool cons not in true|false\n"
                 )
                 val (f', rf', cstrs', rstrs') = constrainExp e env' renv grd' polymatching_table
                 val rel_env = (env',renv,grd')
                 val subflist = Cs.SubFrame(env',grd', f', f) :: fli
-                val subrflist = RCs.SubRFframe (rel_env,grd', rf', rf) :: rfli
+                val subrflist = RCs.SubRFrame (rel_env,rf', rf) :: rfli
               in
                 (subflist,subrflist,cstrs'@cli,rstrs'@rli)
               end
             | _ =>(print "if-then-else error1\n";assertfalse())))
         val rel_env = (env',renv,guard)
       in
-        (f, Cs.WFFrame(env, f) :: subflist, RCs.WFRFrame(rel_env,rf)@subrflist,cstrs1 @ subclist, rstrs1@subrclist)
+        (f, rf, Cs.WFFrame(env, f) :: subflist, (RCs.WFRFrame(rel_env,rf))::subrflist,cstrs1 @ subclist, rstrs1@subrclist)
       end
     else 
       (* not a boolean expression *)
@@ -1082,187 +912,135 @@ struct
         val test_pexpr = matchcase_exp_to_pexpr e
         val test_rexpr = expression_to_rexpr e (* no spl treatment*)
         val cases = List.mapi (pexps, fn (i, (pat, e')) => 
-            (constrain_case environment renvironment matchf match_pexpr match_rexpr polymatching_table 
+            (constrain_case environment renvironment matchf matchrf test_pexpr test_rexpr polymatching_table 
                                                                             (guardvar, i, (pat, e'))))
+                                                                                  val rel_env = (env',renv,guard)
         val cstrs = List.map (cases, (fn (a, b, c, d) => a))
         val rstrs = List.map (cases, (fn (a, b, c, d) => b))
         val subcstrs = List.map (cases, (fn (a, b, c, d) => c))
         val subrstrs = List.map (cases, (fn (a, b, c, d) => d))
       in 
         (f, rf, Cs.WFFrame (env, f) :: cstrs, 
-        RCs.WFRFrame (env, rf) :: rstrs, 
+        RCs.WFRFrame (rel_env, rf) :: rstrs, 
         List.concat (matchcstrs :: subcstrs),
         List.concat (matchrstrs :: subrstrs)) 
       end
   
-  and constrain_lambda (env, guard, f) 
-                        lam 
-                        belong_pat 
-                        binding_table 
-                        call_deps 
-                        binding_frame 
-                        paths 
-                        insidefunbindings 
-                        freevars 
-                        totalvars 
+  and constrain_lambda (env, guard, f) (renv,_,rf) lam 
                         polymatching_table = (
     let val (pat, e') = (fn {arg=arg', argType=argType', body=body', mayInline=mayInline'} 
       => ((Pat.var (arg', argType')), body')) (Lambda.dest lam)
-      in case f of
-          (F.Farrow (_, f, unlabelled_f')) =>
+      in case (f,rf) of
+          (F.Farrow (_, f, unlabelled_f'),RF.RFarrow (_,rf,unlabelled_rf')) =>
             (* \pat.e --> Gamme;guard;pat:f |- e:?? *)
             let val env' = Le.env_bind env pat f
-            val (f'', cstrs) = constrainExp e' 
-                                            env' 
-                                            guard 
-                                            belong_pat 
-                                            binding_table 
-                                            call_deps 
-                                            binding_frame 
-                                            paths 
-                                            insidefunbindings 
-                                            freevars 
-                                            totalvars 
+            val renv' = RLe.env_bind renv pat rf 
+              (expression_to_rexpr e') tycon_map
+            val (f'', rf'',cstrs,rstrs) = constrainExp e' env' renv' guard 
                                             polymatching_table
             val f' = F.label_like unlabelled_f' f''
+            val rf' = RF.label_like unlabelled_rf' rf''
             val f = F.Farrow (SOME pat, f, f')
-            val ret_cs = [Cs.WFFrame (env, f), Cs.SubFrame (env', guard, f'', f')] @ (lcstrs_to_fcstrs cstrs)
-            val _ = pprint_debug "constrain_lambda"
-                                 (ret_cs)
-                                 env
-                                 guard 
-                                 belong_pat 
-                                 call_deps 
-                                 paths 
-                                 polymatching_table
+            val rf = RF.RFarrow (SOME pat, rf, rf')
+            val (rel_env,rel_env') = ((env,renv,guard),(env',renv',guard))
           in
-            (f, [Cs.WFFrame (env, f), Cs.SubFrame (env', guard, f'', f')], cstrs)
+            (f, rf,
+            [Cs.WFFrame (env, f), Cs.SubFrame (env', guard, f'', f')], 
+            [RCs.WFRFrame (rel_env, rf), RCs.SubRFrame (rel_env', rf'', rf')], 
+            cstrs,
+            rstrs)
           end
-      | _ => assertfalse ()
+      | _ => fail "Farrow and RFarrow expected\n"
     end)
 
-  and instantiate_id id f env e polymatching_table = (
+  and instantiate_id id f rf env renv e polymatching_table = (
     print ("instantiate_id " ^ (Var.toString id) ^ "...\n");
     let 
       val env_f =
-      (Le.find id env) handle Not_found => ((*print "H not found";*)
+      (Le.find id env) handle Not_found => (
         (let 
            val tyy = Type.toMyType (Exp.ty e)
-         in Frame.fresh_without_vars tyy sumdatatypeTable end))
-         (* in this case, we would be instantiating fresh with fresh *)
+         in Frame.fresh_without_vars tyy tycon_map end))
+      val env_rf = (RLe.find id renv) handle Not_found => (
+        let 
+           val tyy = Type.toMyType (Exp.ty e)
+         in RF.fresh_without_vars tyy tycon_map end)
       val _ = print ("env_f is " ^ (Frame.pprint env_f) ^ "\n")
+      val _ = print ("env_rf is " ^ (RF.pprint env_rf) ^ "\n")
       val _ = print "instantiating...\n"
       val new_f = F.instantiate env_f f polymatching_table
-      val _ = print ("new frame after instantiation is "^(Frame.pprint new_f)^"\n")
+      val new_rf = RF.instantiate env_rf rf 
+      val _ = print ("Instantiated F is "^(Frame.pprint new_f)^"\n")
+      val _ = print ("Instantiation RF is "^(RF.pprint new_rf)^"\n")
     in 
-      new_f
+      (new_f,new_rf)
     end)
     
     (* responsible for looking up constraints for existing identifiers  and instantiating them *)
-    and constrain_identifier (env, guard, f) id e freevars totalvars polymatching_table = (
-      (*print "constraint identifier \n";*)
-      case (Type.toMyType (Exp.ty e)) of
-          Type_desc.Tconstr (tycon1, type_expr1) => (* Based Identifier *)
-          (* variables come here as ty is Tycon.defaultInt()  *)
+    and constrain_identifier (env, guard, f) (renv,_,rf) id e polymatching_table = 
+    let
+      val rel_env = (env,renv,guard)
+      fun inst_and_refine () =
         let 
-            val refn =
-              if Le.mem id env then 
-                B.equality_refinement (expression_to_pexpr e) 
-              else F.empty_refinement
-            (* id's frame is instantiated with the current frame
-               and trivial {=id} refinement is applied *)
-            val nf = F.apply_refinement refn (instantiate_id id f env e polymatching_table)
-            (* update frame of id in free/total vars table *)
-            val _ = if (HashTable.inDomain freevars id) then 
-                      (* We should never reach here, as mlton is whole-program *)
-                      HashTable.insert freevars (id, nf) 
-                    else ()
-            val _ = if (HashTable.inDomain totalvars id) then HashTable.insert totalvars (id, nf) else ()
-        in (nf, [], [])
-        end 
-      | Type_desc.Tvar _ => 
-        let val refn =
-            if Le.mem id env then B.equality_refinement (expression_to_pexpr e) else F.empty_refinement
-            val nf = F.apply_refinement refn (instantiate_id id f env e polymatching_table)
-            val _ = if (HashTable.inDomain freevars id) then HashTable.insert freevars (id, nf) else ()
-            val _ = if (HashTable.inDomain totalvars id) then HashTable.insert totalvars (id, nf) else ()
-        in (nf, [], [])
-        end 
-      | _ => let 
-               val _ = print ("before instantiate_id, frame is " ^ (Frame.pprint f))
-               val f = instantiate_id id f env e polymatching_table
-               val _ = print ("after instantiate_id, frame is " ^ (Frame.pprint f))
-               val _ = Lightenv.update id f env
-               val _ = if (HashTable.inDomain freevars id) then HashTable.insert freevars (id, f) else ()
-               val _ = if (HashTable.inDomain totalvars id) then HashTable.insert totalvars (id, f) else ()
-             in 
-               (f, [Cs.WFFrame(env, f)], []) 
-             end
-  )
+          val refn =
+            if Le.mem id env then 
+              B.equality_refinement (expression_to_pexpr e) 
+            else F.empty_refinement
+          val r_refn =
+            if RLe.mem id renv then 
+              RB.equality_refinement defaultCons (expression_to_rexpr e) 
+            else RF.empty_refinement (* Notice that refinement changed from RTop to empty *)
+            val (inst_f,inst_rf) = instantiate_id id f rf env renv e polymatching_table
+          val nf = F.apply_refinement refn inst_f
+          val rnf = RF.apply_refinement r_refn inst_rf
+        in 
+          (nf,rnf,[Cs.WFFrame(env,nf)],[RCs.WFRFrame(rel_env,rnf)],[],[])
+        end
+      fun inst_only () =
+        let
+          val (inst_f,inst_rf) = instantiate_id id f rf env renv e polymatching_table
+        in
+          (inst_f,inst_rf,[Cs.WFFrame(env,inst_f)],[RCs.WFRFrame(rel_env,inst_rf)],[],[])
+        end
+    in
+      case (Type.toMyType (Exp.ty e)) of
+        Type_desc.Tconstr _ => (* Based Identifier *) inst_and_refine()
+      | Type_desc.Tvar _ => (* Equality over Tvar. Hmm.. *) inst_and_refine()
+      | _ => inst_only()
+    end
   
-  and apply_once env 
-                 guard 
-                 (e, (f, cstrs(* =[] *), subexp_cstrs(* when e1 is an expr*))) 
-                 belong_pat 
-                 binding_table 
-                 call_deps 
-                 binding_frame 
-                 paths 
-                 insidefunbindings 
-                 freevars 
-                 totalvars 
+  and apply_once env renv guard e2 f rf subexp_cstrs subexp_rstrs 
                  polymatching_table 
                  func = 
-    case (f, e) of
-        (*l: arg_pat, f: arg_frame, f': return_frame*)
-        (F.Farrow (l, f, f'), e2) =>
+    case (f, rf) of
+        (F.Farrow (l, f, f'), RF.RFarrow(_,rf,rf')) =>
           let 
-            (* e2_cstrs contain constrains generated on tuple if e2 is tuple.
-               eg: v.1=x_0, v.2 = x_1 ...*)
-            val (f2, e2_cstrs) = constrainExp e2 
-                                                env 
-                                                guard 
-                                                belong_pat 
-                                                binding_table 
-                                                call_deps 
-                                                binding_frame 
-                                                paths 
-                                                insidefunbindings 
-                                                freevars 
-                                                totalvars 
-                                                polymatching_table
-            (* f'' is f' after substituting actuals for formals *)
-            val f'' = case l of
+            val (f2, rf2, e2_cstrs, e2_rstrs) = constrainExp e2 env renv guard polymatching_table
+            val (pexpr,relemlist) = (case (Exp.node e2) of
+              Exp.Record r =>
+                let 
+                  val pexprlist = Vector.toListMap ( (Record.toVector(r)), 
+                      (expression_to_pexpr o (fn (a, b) => b)))  
+                  (* we allow only variables and ints in args *)
+                  val relemlist = expr_to_relem_list e2
+                in
+                  (Predicate.Tuplelist pexprlist,relemlist)
+                end			        			
+              | _ => ((expression_to_pexpr e2),expr_to_relem_list e2))
+            val (f'',rf'') = case l of
                 SOME pat =>
-                  (
-                  print ("\n Apply once : pat is " ^ (CoreML.Pat.visitPat pat) ^ " while e2 is " ^ (CoreML.visitExp e2) ^"\n");
-                  case (Exp.node e2) of
-                    Exp.Record r =>
-                      (
-                      let 
-                        val pexprlist = Vector.toListMap (
-                            (Record.toVector(r)), 
-                            (expression_to_pexpr o (fn (a, b) => b))
-                            (* pexprlist should be [PVar(Var(x)), PVar(Var(y))] *)
-                        )  
-                        val sublst (* Frame.substitution list *) = 
-                          (* will return a list of pexpr1=v.1, pexpr.2=v.2 .. *)
-                          (* [
-                                (Pat.Var(Var(a),Proj(1,Tuplelist(pexprlist))),
-                                (Pat.Var(Var(b),Proj(2,Tuplelist(pexprlist))),
-                             ] 
-                          *)
-                          (Pattern.bind_pexpr pat (Predicate.Tuplelist pexprlist))
-                      in
-                        (* will now substitute all a,b,c.. in f' with pat.1, pat.2... *)
-                        (* F.Fconstr(TyCon.bool,[], (sublist,Qcons[(Var(">="),Var(z),pred)])) 
-                           where pred is Iff( (FunApp("__tag",[Pvar(z)])), Atom((Pvar(a),P.Ge,Pvar(b))))
-                        *)
-                        List.foldr (sublst, f', fn (sub, fr) => F.apply_substitution sub fr)
-                      end			        			
-                      ) 		        		
-                    | _ => List.foldr ((Pattern.bind_pexpr pat (expression_to_pexpr e2)), f', fn (sub, fr) => F.apply_substitution sub fr))
-              | _ => (
+                let
+                  val (sublist,rsublist) = 
+                    ((Pattern.bind_pexpr pat pexpr),
+                     (Pattern.bind_relem pat relemlist))
+                in
+                  (print ("\n Apply once : pat is " ^ (CoreML.Pat.visitPat pat) ^ 
+                    " while e2 is " ^ (CoreML.visitExp e2) ^"\n");
+                    (List.foldr (sublist, f', fn (sub, fr) => F.apply_substitution sub fr),
+                    List.foldr (rsublist, rf', fn (sub, rf) => RF.apply_substitution sub rf))
+                  )
+                end
+              | _ => (*case when f is unlabeled*)
                 let 
                   fun paramIndex e = 
                     case (Exp.node e) of
@@ -1272,137 +1050,63 @@ struct
                   val index = paramIndex func
                   val funname = getFunctionAppName func
                   val vpat = Pat.var (Var.fromString ("local_arg" ^ (Int.toString index)), Type.var(Tyvar.newNoname {equality = false}))
-                in	(* Problem here: Not considering record *)
-                  List.foldr ((Pattern.bind_pexpr vpat (expression_to_pexpr e2)), f', fn (sub, fr) => F.apply_substitution sub fr)
+                in
+                  (List.foldr ((Pattern.bind_pexpr vpat (expression_to_pexpr e2)), f', fn (sub, fr) => F.apply_substitution sub fr),rf')
                 end
-              )
-            val _ = print ("After args instantiation, returnable frame is "^(Frame.pprint f')^"\n")
+            val rel_env = (env,renv,guard)
             (* f2=>f for precondition *)
-            (* or is it f2=>f''', where f''' is [sublist] f ?*)
-            val ret_cs = (Cs.SubFrame (env, guard, f2, f) :: cstrs)@(lcstrs_to_fcstrs (e2_cstrs @ subexp_cstrs))
-            val _ = pprint_debug "constrain_application - apply_once"
-                                 (ret_cs)
-                                 env
-                                 guard 
-                                 belong_pat 
-                                 call_deps 
-                                 paths 
-                                 polymatching_table
           in 
-            (f'', Cs.SubFrame (env, guard, f2, f) :: cstrs, e2_cstrs @ subexp_cstrs) 
+            (f'', rf'', 
+            [Cs.SubFrame (env, guard, f2, f)], 
+            [RCs.SubRFrame (rel_env, rf2,rf)], (*subframing between tuples *)
+            e2_cstrs @ subexp_cstrs, 
+            e2_rstrs @ subexp_rstrs) 
           end
-      | _ => assertfalse ()
+      | _ => fail "Arrow frames expected in apply_once\n"
   
   (* function application expressions are constrained here *)
-  and constrain_application (env, guard, _) 
-                            func 
-                            exp 
-                            belong_pat 
-                            binding_table 
-                            call_deps 
-                            binding_frame 
-                            paths 
-                            insidefunbindings 
-                            freevars 
-                            totalvars 
-                            polymatching_table = 
-    (let
-      val _ = print ("constrain application ...\n" ^ (CoreML.visitExp func) ^ " " ^ (CoreML.visitExp exp))
-      val (func_frame, func_cstrs) = constrainExp func 
-                                                  env 
-                                                  guard 
-                                                  belong_pat 
-                                                  binding_table 
-                                                  call_deps 
-                                                  binding_frame 
-                                                  paths 
-                                                  insidefunbindings
-                                                  freevars 
-                                                  totalvars 
-                                                  polymatching_table
+  and constrain_application (env, guard, _) (renv,_,rf) 
+      func exp polymatching_table = 
+    let
+      val _ = print ("constrain application ...\n")
+      val (func_frame, func_rf, func_cstrs, func_rstrs) = 
+        constrainExp func env renv guard polymatching_table
     in 
-      print ("\n\n THE BELONG_PAT IS " ^ (Pat.visitPat belong_pat) ^ " \n\n");
-      (case (Exp.node func) of
-        (Exp.Var (var, targs)) => 
-          (* So, fn is added to call deps only if it is named. *)
-          ((*print ("pushing " ^ (Pat.visitPat (Pat.var (var(), Exp.ty func)))) ;*) List.push (call_deps, (belong_pat, Pat.var (var(), Exp.ty func))))
-        | _ => ());
-      apply_once env 
-                 guard 
-                 (exp, (func_frame, [], func_cstrs)) 
-                 belong_pat 
-                 binding_table 
-                 call_deps 
-                 binding_frame 
-                 paths 
-                 insidefunbindings 
-                 freevars 
-                 totalvars 
+      apply_once env renv guard exp func_frame 
+                func_rf func_cstrs func_rstrs 
                  polymatching_table 
                  func
-    end)
+    end
   
-  and constrain_let (env, guard, f) 
-                    decs 
-                    body 
-                    belong_pat 
-                    binding_table 
-                    call_deps 
-                    binding_frame 
-                    paths 
-                    insidefunbindings 
-                    freevars 
-                    totalvars 
+  and constrain_let (env, guard, f) (renv,_,rf) decs body 
                     polymatching_table =
       let 
-        val renv = RLe.empty 0
         val (env',renv',cstrs1,rstrs1) = 
           constrain_structure env renv guard decs polymatching_table 
-        (* let bindings only extend the environment. So we pass
-           extended env to constrain body. However, constraints generated
-           inside above call refer to correct (updated) guard_t *)
-        val (binding_frame',call_deps',paths',insidefunbindings',binding_table') = 
-            (binding_frame,call_deps,paths,insidefunbindings,binding_table)
-        val (body_frame, cstrs2) = constrainExp body 
-                                                env' 
-                                                guard 
-                                                belong_pat 
-                                                binding_table 
-                                                call_deps 
-                                                binding_frame 
-                                                paths 
-                                                insidefunbindings 
-                                                freevars 
-                                                totalvars 
-                                                polymatching_table
-        val _ = (Common.mergeHashTable binding_table binding_table'; 
-                List.foreach ((!call_deps'), fn cd => List.push (call_deps, cd)); 
-                List.foreach ((!paths'), fn pt => List.push (paths, pt));
-                Common.mergeHashTable binding_frame binding_frame';
-                Common.mergeHashTable insidefunbindings insidefunbindings')
-      (*val _ = print "In constrain_let now \n"
-      val _ = (print "Constraints from the lets are : "; List.foreach(cstrs1, fn (lc c) => print ((Constraint.pprint (#lc_cstr c)) ^"\n")))
-      val _ = print "In body now \n"
-      val _ = (print "Constraints from the body are : "; List.foreach(cstrs2, fn (lc c) => print ((Constraint.pprint  (#lc_cstr c)) ^"\n")))*)
+        val (body_frame, body_rframe, cstrs2, rstrs2) =
+          constrainExp body env' renv' guard polymatching_table
+        val rel_env = (env,renv,guard)
+        val rel_env' = (env',renv',guard)
     in
-        case (Exp.node body) of
-            Exp.Let (_, _) => (body_frame, [Cs.WFFrame (env, body_frame)], cstrs1 @ cstrs2)
-          | _ =>
-            let (*val _ = print "\nbefore labelling\n"*) 
-                val f = F.label_like f body_frame
-                (*val _ = print "\nend labelling\n" *)
-                val ret_cs = ([Cs.WFFrame (env, f), Cs.SubFrame (env', guard, body_frame, f)])@(lcstrs_to_fcstrs (cstrs1 @ cstrs2))
-              val _ = pprint_debug "constrain_let"
-                                   (ret_cs)
-                                   env
-                                   guard 
-                                   belong_pat 
-                                   call_deps 
-                                   paths 
-                                   polymatching_table
-            in
-              (f, [Cs.WFFrame (env, f), Cs.SubFrame (env', guard, body_frame, f)], cstrs1 @ cstrs2)
-            end
+      case (Exp.node body) of (* we don't need this special case in sml. *)
+        Exp.Let (_, _) => 
+          (body_frame, 
+          body_rframe, 
+          [Cs.WFFrame (env, body_frame)],
+          [RCs.WFRFrame (rel_env, body_rframe)],
+          cstrs1 @ cstrs2,
+          rstrs1 @ rstrs2)
+      | _ =>
+        let 
+          val f = F.label_like f body_frame
+          val rf = RF.label_like rf body_rframe
+        in
+          (f, rf,
+          [Cs.WFFrame (env, f), Cs.SubFrame (env', guard, body_frame, f)], 
+          [RCs.WFRFrame (rel_env, rf), RCs.SubRFrame (rel_env', body_rframe, rf)], 
+          cstrs1 @ cstrs2,
+          rstrs1 @ rstrs2)
+        end
     end
   
   (*and constrain_array (env, guard, f) elements =
@@ -1419,88 +1123,31 @@ struct
       end
   *)
   
-  (* Our tool currently only consider list as array *)
-  and constrain_list (env, guard, f) 
-                     elements 
-                     belong_pat 
-                     binding_table 
-                     call_deps 
-                     binding_frame 
-                     paths 
-                     insidefunbindings 
-                     freevars 
-                     totalvars 
-                     polymatching_table =
-    let 
-      val (f, fs) = case f of
-          F.Fconstr(p, l, _) => (F.Fconstr(Tycon.list, l, B.size_lit_refinement(Vector.length elements)), l)
-          | _ => assertfalse () 	
-      fun list_rec (e, (fs, c)) = (fn (f, cs) => (f::fs, cs @ c)) (constrainExp e env guard 
-          belong_pat binding_table call_deps binding_frame paths insidefunbindings freevars totalvars polymatching_table)
-      val (fs', sub_cs) = List.fold ((Vector.toList elements), ([], []), list_rec) 
-      fun mksub b a = Cs.SubFrame(env, guard, a, b) 
-    in
-      (f, Cs.WFFrame(env, f) :: List.map (fs', (mksub (List.first fs))), sub_cs)
-    end
-  
 
-  and constrain_sequence (env, guard, f) 
-                          es 
-                          belong_pat 
-                          binding_table 
-                          call_deps 
-                          binding_frame 
-                          paths 
-                          insidefunbindings 
-                          freevars 
-                          totalvars 
+  and constrain_sequence (env, guard, f) (renv,_,rf) es 
                           polymatching_table =
-    Vector.fold (es, (f, [], []), (fn (a, (_, nulllist, cs2)) =>
-                let val (f', cs1) = constrainExp a 
-                                                 env 
-                                                 guard 
-                                                 belong_pat 
-                                                 binding_table 
-                                                 call_deps 
-                                                 binding_frame 
-                                                 paths 
-                                                 insidefunbindings 
-                                                 freevars 
-                                                 totalvars 
-                                                 polymatching_table
-                in
-                  (f', nulllist, cs1 @ cs2)
-                end
-              ))
+    let
+      val (f,rf,cs,rs) = Vector.fold (es, (f, rf, [], []), 
+        (fn (a, (_,_, cs2, rs2)) =>
+          let 
+            val (f', rf', cs1,rs1) = 
+              constrainExp a env renv guard polymatching_table
+          in
+            (f',rf',cs1@cs2,rs1@rs2)
+          end
+        ))
+    in
+        (f,rf,[],[],cs,rs)
+    end
+
+  and constrain_assertfalse (_, _, f) (_,_,rf)= (f, rf, [], [],[],[])
   
 
-  and constrain_assertfalse (_, _, f) = (f, [], [])
-  
-
-  and constrain_assert (env, guard, _) 
-                        e 
-                        belong_pat 
-                        binding_table 
-                        call_deps 
-                        binding_frame 
-                        paths 
-                        insidefunbindings 
-                        freevars 
-                        totalvars 
+  and constrain_assert (env, guard, _) (renv, _,rf) e 
                         polymatching_table =
-    let val (f, cstrs) = constrainExp 
-                         e 
-                         env 
-                         guard 
-                         belong_pat 
-                         binding_table 
-                         call_deps 
-                         binding_frame 
-                         paths 
-                         insidefunbindings 
-                         freevars 
-                         totalvars 
-                         polymatching_table 
+    let 
+      val (f, rf, cstrs, rstrs) = 
+        constrainExp e env renv guard polymatching_table 
       val f = case f of 
         F.Fconstr (a, b, (subs, F.Qconst[(v1,v2,P.Not (P.True))])) => 
           F.Fconstr (a, b, (subs, F.Qconst[(v1,v2,P.Iff ((B.tag (P.PVar v2)), P.Not (P.True)))]))
@@ -1511,26 +1158,9 @@ struct
           (Var.mk_ident "assertion",
            Var.mk_ident "null",
            P.equals (B.tag (P.PVar guardvar)) (P.int_true))
-           
-      val _ = case f of 
-          F.Fconstr (a, b, (subs,F.Qconst[(v1,v2,P.Iff (v3,p))])) => 
-            if Predicate.logic_equals_pexp v3 (B.tag (P.PVar v2)) then 
-              List.push (paths, (belong_pat, (B.tag (P.PVar guardvar)), (Predicate.apply_substs subs p), true))
-            else (print "Error: assert unknown frame encountered."; assertfalse ())
-          | _ => (print "Error: assertion ill formed1 "; print (Frame.pprint f); assertfalse ())
-      val ret_cs = [Cs.SubFrame (env, guard, B.mk_int [], B.mk_int [assert_qualifier])] @ (lcstrs_to_fcstrs cstrs)
-      val _ = pprint_debug "constrain_assert"
-                           (ret_cs)
-                           env
-                           guard 
-                           belong_pat 
-                           call_deps 
-                           paths 
-                           polymatching_table
       in 
-        (B.mk_unit (), [Cs.SubFrame (env, guard, B.mk_int [], B.mk_int [assert_qualifier])], cstrs) 
+        (B.mk_unit (), rf, [Cs.SubFrame (env, guard, B.mk_int [], B.mk_int [assert_qualifier])], [],cstrs,[]) 
       end
-  
   
   fun simplylc c = case c of
       Cs.lc c' => c'

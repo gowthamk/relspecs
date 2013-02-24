@@ -2,7 +2,7 @@ signature REL_FRAME =
 	sig	
 		include ATOMS
 
-		type substitution = Var.t * RelPredicate.rpexpr
+		type substitution = Var.t * RelPredicate.relem (* for time being *)
 		
 		datatype open_assignment = RTop | RBottom
 		
@@ -20,7 +20,7 @@ signature REL_FRAME =
 		  | RFconstr of Tycon.t * t list * refinement
 		  | RFarrow of CoreML.Pat.t option * t * t
 		  | RFrecord of (t * string) list * refinement
-		  | RFsum of Tycon.t * (Con.t * t) list * refinement (* t must be Fconstr here *)
+		  (*| RFsum of Tycon.t * (Con.t * t) list * refinement (* t must be RFconstr here *)*)
 		  | RFunknown
 		  
 		datatype variance = RInvariant | RCovariant | RContravariant
@@ -32,26 +32,27 @@ signature REL_FRAME =
 		(*val same_shape: bool -> (t * t) -> bool*)
 		val fresh_true : unit -> refinement
     (* fresh gives a new frame for given type. It takes Type Constructor to value constructor mapping. *)
-		val fresh: CoreML.Type_desc.type_desc -> (Tycon.t, (Con.t * Type_desc.type_desc list) list) HashTable.hash_table -> t
-		val fresh_without_vars: CoreML.Type_desc.type_desc -> (Tycon.t, (Con.t * Type_desc.type_desc list) list) HashTable.hash_table -> t
-		val fresh_unconstrained: CoreML.Type_desc.type_desc -> (Tycon.t, (Con.t * Type_desc.type_desc list) list) HashTable.hash_table -> t
-		(*val fresh_constructor: CoreML.Type_desc.type_desc -> t -> t list*)
-		val instantiate: t -> t -> (Var.t, Var.t) HashTable.hash_table -> t
-	  (*	val instantiate_qualifiers: (string * Var.t) list -> t -> t*)
-		val bind: CoreML.Pat.t -> t -> (Var.t * t) list
+		val fresh: CoreML.Type_desc.type_desc -> TyconMap.t -> t
+		val fresh_without_vars: CoreML.Type_desc.type_desc -> TyconMap.t -> t
+		val fresh_unconstrained: CoreML.Type_desc.type_desc -> TyconMap.t -> t
+    val fresh_refinement : RelQualifier.t -> refinement
+		val fresh_constructor: Con.t -> t list -> RelPredicate.rexpr -> TyconMap.t -> t list
+		val instantiate: t -> t -> t
+	  val instantiate_qualifiers: (string * Var.t) list -> t -> t
+		val bind: CoreML.Pat.t -> t ->RelPredicate.rexpr -> TyconMap.t -> (Var.t * t) list
 		(*val bind_index : CoreML.Pat.t -> t -> (Var.t * (t * string option)) list*) (* we want a string represting its index (key) *)
 
 		(*val bind_record : CoreML.Pat.t -> t -> Var.t -> (Var.t * t) list*)
 		
-		(*val apply_substitution: substitution -> t -> t
+		val apply_substitution: substitution -> t -> t
 		val label_like: t -> t -> t
-		val apply_solution: (Var.t -> Qualifier.t list) -> t -> t
+		(*val apply_solution: (Var.t -> Qualifier.t list) -> t -> t
 		(*val refinement_conjuncts:
 		  (Var.t -> Qualifier.t list) -> Predicate.pexpr -> refinement -> Predicate.t list
 		val refinement_predicate:
 		   (Var.t -> Qualifier.t list) -> Predicate.pexpr -> refinement -> Predicate.t*)
-		val refinement_vars: t -> Var.t list
-		val apply_refinement: refinement -> t -> t*)
+		val refinement_vars: t -> Var.t list*)
+		val apply_refinement: refinement -> t -> t
 		(*val predicate:
 		  (Var.t -> Qualifier.t list) -> Predicate.pexpr -> t -> Predicate.t
 		val conjuncts:
@@ -97,9 +98,13 @@ structure RelFrame : REL_FRAME =
 		
 		open CoreML
 		open Pat
+
+    structure RP = RelPredicate
+    structure RQ = RelQualifier
+    structure TM = TyconMap
 		
 				
-		type substitution = Var.t * RelPredicate.rpexpr
+		type substitution = Var.t * RelPredicate.relem (* will change *)
 		
 		datatype open_assignment = RTop | RBottom
 		
@@ -114,7 +119,7 @@ structure RelFrame : REL_FRAME =
 		  | RFconstr of Tycon.t * t list * refinement
 		  | RFarrow of CoreML.Pat.t option * t * t
 		  | RFrecord of (t * string) list * refinement
-		  | RFsum of Tycon.t * (Con.t * t) list * refinement (* t must be Fconstr here *)
+		  (*| RFsum of Tycon.t * (Con.t * t) list * refinement (* t must be RFconstr here *)*)
 		  | RFunknown
 		  
 		datatype variance = RInvariant | RCovariant | RContravariant
@@ -139,8 +144,8 @@ structure RelFrame : REL_FRAME =
 			    	| RFconstr (p, fs, r) => RFconstr (p, List.map (fs, fn fr => unfoldRecursiveFrame fr tc subfs), r)
 			    	| RFarrow (x, f1, f2) => RFarrow (x, unfoldRecursiveFrame f1 tc subfs, unfoldRecursiveFrame f2 tc subfs)
 			    	| RFrecord (fs, r) => RFrecord (List.map (fs, (fn (fr, n) => (unfoldRecursiveFrame fr tc subfs, n))), r)
-			    	| RFsum (tc', [], r) => if (Tycon.equals (tc, tc')) then RFsum (tc, subfs, r) else fr
-			    	| RFsum (tc', fs, r) => RFsum (tc', List.map (fs, fn (c, fr) => (c, unfoldRecursiveFrame fr tc subfs)), r)
+			    	(*| RFsum (tc', [], r) => if (Tycon.equals (tc, tc')) then RFsum (tc, subfs, r) else fr
+			    	| RFsum (tc', fs, r) => RFsum (tc', List.map (fs, fn (c, fr) => (c, unfoldRecursiveFrame fr tc subfs)), r)*)
 
     fun same_shape map_vars (t1, t2) =
 			let 
@@ -171,7 +176,7 @@ structure RelFrame : REL_FRAME =
                   List.forall2 (f1s, f2s, shape_rec)
                 end
               else false
-            | (RFsum (p1, f1s, _), RFsum (p2, f2s, _)) =>
+            (*| (RFsum (p1, f1s, _), RFsum (p2, f2s, _)) =>
               if (List.length f1s = List.length f2s) then
                 let fun shape_rec ((c1, f1), (c2, f2)) = Con.equals (c1, c2) andalso (same_shape map_vars) (f1, f2)
                 in (Tycon.equals (p1, p2)) andalso (List.forall2 (f1s, f2s, shape_rec)) end
@@ -179,7 +184,7 @@ structure RelFrame : REL_FRAME =
                 (Tycon.equals (p1, p2))
               else if (List.length f2s = 0 andalso not (List.length f1s = 0)) then
                 (Tycon.equals (p1, p2))
-              else false
+              else false*)
           | (RFunknown, RFunknown) => true
           | _ => false
 		  	end
@@ -187,110 +192,78 @@ structure RelFrame : REL_FRAME =
 		(* Instantiate the tyvars in fr with the corresponding frames in ftemplate.
 		   If a variable occurs twice, it will only be instantiated with one frame; which
 		   one is undefined and unimportant. *)
+    (* Summarily, monomorphization so that we know R(cons,l) is
+       now an int set against 'a set *)
+    (* Functionality of unify procedure *)
 		fun instantiate fr (* Frame.t *)
-                    ftemplate (* Frame.t *)
-                    polymatching_table (* (Var.t,Var.t) hash_table*) =
+                    ftemplate (* Frame.t *) =
 			let 
         val vars = ref []
-				fun inst (f, ft) = (
-				    case (f, ft) of
-                (RFvar _, RFvar _) => 
-                  let 
-                    val ff = List.peek ((!vars), (fn (f', _) => MLton.eq (f, f')))
-                  in
-                    case ff of
-                        SOME (f', ft') => f'  (* Make a major change here by He Zhu *) 
-                      | NONE => (vars := (f, ft) :: (!vars); f) (* And there *)
-                  end	
-              | (RFvar (a, r), _) => (
-                  let 
-                    val _ = print ("--- instantiate gets interesting ---\n")
-                    val ff = List.peek ((!vars), (fn (f', _) => MLton.eq (f, f')))
-                    val fk = case r of 
-                      (_, RQvar (k', _)) => SOME k'
-                      | _ => NONE
-                    val ftk = case ft of
-                        RFconstr (_,_,(_, RQvar (k',_))) => SOME k'
-                      | RFrecord (_,(_, RQvar (k',_))) => SOME k'
-                      | RFarrow _ => NONE
-                      | _ => NONE
-                    val _ = case (fk, ftk) of
-                      (* polymatching_table contains equivalence of refinement_vars *)
-                      (SOME fk, SOME ftk) => HashTable.insert polymatching_table (ftk, fk)
-                    | _ => ()
-                in
-                  case ff of
-                      SOME (f', ft') => ft'  (* Make a major change here by He Zhu *) 
-                    | NONE => (vars := (f, ft) :: (!vars); ft) (* And there *)
-                end
-                )
-				      | (RFarrow (l, f1, f1'), RFarrow (_, f2, f2')) => (
-				      		RFarrow (l, inst (f1, f2), inst (f1', f2'))
-				      		)
-				      | (RFconstr (p, l, r), RFconstr (p', l', _)) => (
-				      		RFconstr(p, List.map2 (l, l', inst), r)
-				      		)
-				      | (RFrecord (f1s, r), RFrecord (f2s, _)) =>
-				      		let fun inst_rec ((f1, name), (f2, _)) = (inst (f1, f2), name) 
-				      		in RFrecord (List.map2 (f1s, f2s, inst_rec), r) end
-				      | (RFsum (tycon, f1s, r), RFsum (_, f2s, _)) =>
-				      		let fun inst_rec ((c, f1), (_, f2)) = (c, inst (f1, f2)) 
-				      		in RFsum (tycon, (List.map2 (f1s, f2s, inst_rec)), r) end
-				      | (RFconstr (p1, f1s, r1), RFsum (_, f2s, _)) =>
-							let 
-								val f2 = List.peek (f2s, fn (c, cf) => same_shape true (f, cf))
-								val f2 = case f2 of SOME (c2, f2) => f2 | NONE => (print ("\nIll typed constructor" ^ (pprint f) ^ "\n"); assertfalse ())
-								val f2 = unfoldRecursiveFrame f2 p1 f2s
-							in case f2 of 
-								RFconstr (p2, f2s, r2) => RFconstr (p1, List.map2 (f1s, f2s, inst), r1)
-								| _ => (print "\nSum type error\n"; assertfalse ())
-							end
-					  | (RFsum (_, f1s, _), RFconstr (p2, f2s, r2)) =>
-					  		let val f1 = List.peek (f1s, fn (c, cf) => same_shape true (cf, ft))
-					  			val f1 = case f1 of SOME (c1, f1) => f1 | NONE => (print ("\nIll typed constructor" ^ (pprint ft) ^ "\n"); assertfalse ())
-					  			val f1 = unfoldRecursiveFrame f1 p2 f1s
-					  		in case f1 of 
-					  			RFconstr (p1, f1s, r1) => RFconstr (p1, List.map2 (f1s, f2s, inst), r1)
-					  			| _ => (print "\nSum type error\n"; assertfalse ())
-					  		end
-				      | (RFunknown, RFunknown) => RFunknown
-				      | (f1, f2) => (print ("@[Unsupported@ types@ for@ instantiation:@;<1 2>" ^ (pprint f1) ^ "@;<1 2>" ^ (pprint f2) ^ "@]@."); 
-				      							assertfalse ())
-				)
+				fun inst (f, ft) = case (f, ft) of
+          (RFvar _ , _) =>
+            let 
+              val ff = List.peek ((!vars), (fn (f', _) => MLton.eq (f, f')))
+            in
+              case ff of
+                  SOME (f', ft') => ft'  
+                | NONE => (vars := (f, ft) :: (!vars); ft)
+            end
+        | (RFarrow (l, f1, f1'), RFarrow (_, f2, f2')) =>
+            RFarrow (l, inst (f1, f2), inst (f1', f2'))
+        | (RFconstr (p, l, r), RFconstr (p', l', _)) =>
+            RFconstr(p, List.map2 (l, l', inst), r)
+        | (RFrecord (f1s, r), RFrecord (f2s, _)) =>
+            let fun inst_rec ((f1, name), (f2, _)) = (inst (f1, f2), name) 
+            in RFrecord (List.map2 (f1s, f2s, inst_rec), r) end
+        | (RFunknown, RFunknown) => RFunknown
+        | (f1, f2) => (print ("@[Unsupported@ types@ for@ instantiation:@;<1 2>" ^ (pprint f1) ^ "@;<1 2>" ^ (pprint f2) ^ "@]@."); 
+                      assertfalse ())
 			in 
         inst (fr, ftemplate) 
 			end
-		
 		
 		(* We build fresh refinement variables*)
     (* fresh_refinementvar :open_assignment -> refinement *)
     (* refinement is [substitution list]*qualifier_expr *)
 		fun fresh_refinementvar open_assn = ([], RQvar (Var.mk_ident "r", open_assn))
-		fun fresh_true () = ([], RQconst ([(Var.dummy (), Var.mk_ident "true", RelPredicate.RTrue)]))
+		fun fresh_true () = ([], RQconst ([(Var.dummy (), Var.mk_ident "rtrue", RelPredicate.RTrue)]))
 		fun fresh_rfvar () = RFvar (Var.mk_ident "a", ([], RQvar (Var.mk_ident "r", RTop)))
+    fun fresh_refinement q = ([],RQconst[q])
+    fun add_qual_to_refn refn qual =  case refn of
+        ([],RQconst l) => ([],RQconst (qual::l))
+      | _ => (print "Invalid refinment\n";assertfalse())
 		
 		(* Create a fresh frame with the same shape as the type of [exp] using
 		   [fresh_ref_var] to create new refinement variables. *)
     (* fresh_with_var_fun :(useless) ->Type_desc.t -> (unit -> refinement) -> (TyCon, Valcon list) hashtable
                             -> Frame.t *)
-  fun fresh_with_var_fun vars ty fresh_ref_var datatypeTable =
+  fun fresh_with_var_fun vars ty fresh_ref_var tm =
     (* tyconslist = []; freshf = fresh_ref_var; t = ty *)
     let fun fresh_rec freshf tyconslist t = case t of
-        Type_desc.Tvar tvar => fresh_rfvar ()
-      | Type_desc.Tconstr(p, tyl) => (
-        if (HashTable.inDomain datatypeTable p) then
+        Type_desc.Tvar tvar => 
           let
+            val vfopt = (List.peek (!vars, (fn(v,f)=>(Tyvar.equals(v,tvar)))))
+          in
+            case vfopt of
+              SOME (v,f) => f
+            | NONE => let val fv = fresh_rfvar() in 
+                (List.push (vars,(tvar,fv)); fv) end
+          end
+      | Type_desc.Tconstr(p, tyl) => (
+        if (TM.tycon_mem tm p) then
+          let
+            (* foreach tyarg, generate frame.
+               returns old frame if tyarg is in !vars *)
             val tyfs = List.map (tyl,(fresh_rec freshf tyconslist))
           in
             RFconstr (p,tyfs,freshf())
           end
         else
-          (* Not a sum datatype. Just type. Give bottom frames*)
+          (* Not a sum datatype. Just type. Empty refinement*)
           let
-            val bottom_freshf = (fn _ => fresh_refinementvar RBottom)
             val tyfs = List.map (tyl,(fresh_rec freshf tyconslist))
-            val frame = RFconstr (p, [], bottom_freshf()) 
-            (*val _ = print ("\nFconstr frame -- "^(pprint frame)^"\n")*)
+            val frame = RFconstr (p, tyfs, empty_refinement) 
+            (*val _ = print ("\nRFconstr frame -- "^(pprint frame)^"\n")*)
           in
             frame
           end
@@ -312,17 +285,51 @@ structure RelFrame : REL_FRAME =
     end
 
 		(* fresh frame for given type *)
-		fun fresh ty datatypeTable = 
-			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar RTop) datatypeTable (* qvar *)
+		fun fresh ty tm = 
+			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar RTop) tm (* qvar *)
 
-		fun fresh_unconstrained ty datatypeTable =
-			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar RBottom) datatypeTable (* qvar *)
+		fun fresh_unconstrained ty tm =
+			fresh_with_var_fun (ref []) ty (fn _ => fresh_refinementvar RBottom) tm (* qvar *)
 
-		fun fresh_without_vars ty datatypeTable =
-			fresh_with_var_fun (ref []) ty (fn _ => empty_refinement) datatypeTable (* empty qconst *)
+		fun fresh_without_vars ty tm =
+			fresh_with_var_fun (ref []) ty (fn _ => empty_refinement) tm (* empty qconst *)
 		
+    (* creates fresh frames for constructor arguments in pattern
+     * having the knowledge of frames of tyargs of current type constructor.
+     * i.e., if type is 'a list, and pat is h::t, it creates frames for h and
+     * t knowing the frame for ;a
+     *)
+    fun fresh_constructor c tyvarfs rexpr tm =
+      let
+        val tyvars = TM.get_tyvars_by_cstr tm c
+        val _ = asserti((List.length tyvars = List.length tyvarfs),
+          "valcon tyargs not same as tycon tyargs\n")
+        val tyargmap = ref (List.zip (tyvars,tyvarfs))
+        val argtylist = (TM.get_argtys_by_cstr tm c
+          handle Not_found => (print "Unknown cons";assertfalse()))
+        val rexpr = case rexpr of 
+            RP.RRel(c',v) => if (Con.toString c' = "any") then RP.RRel(c,v) 
+              else (asserti(Con.equals(c,c'),"Valcon mismatch\n"); rexpr)
+          | _ => rexpr
+        val fresh_ref = fn _ => fresh_refinementvar RTop
+        val subset_ref = fresh_refinement(RQ.subset_qualifier c rexpr)
+        fun cons_rec (t,flag) = 
+        let
+          val f = fresh_with_var_fun tyargmap t (fn _ => fresh_refinementvar RTop) tm
+        in
+          if (not flag) then f else (case f of
+              RFconstr(tycon,fs,_) => RFconstr(tycon,fs,subset_ref)
+            | _ => fail "Recursive frame not fconstr\n")
+        end
+      in
+        (* for every ty in argtylist, create a new frame. Reuse tyvar frames. *)
+        (* We do not use same frames for recursive args. Why? because relational
+           properties are not satisfiable recursively *)
+        List.map (argtylist,cons_rec)
+      end
+
     (* bind is called from lightenv *)
-		fun bind pat relframe =
+		fun bind pat relframe rexpr tm =
 			let 
 				fun mbind (pat, relframe) =
 					let 
@@ -333,26 +340,24 @@ structure RelFrame : REL_FRAME =
 							   * arg is the parameters for the constructor. Ideally it should be a tuple or just 
 							   * one element
 							   *)
-                (Pat.Con {arg, con, targs}, f) => (case f of 
-                    RFsum (tycon, fs, _) =>
-                    let 
-                      val cf = List.peek (fs, fn (c, f) => Con.equals (c, con))
-                      val cf = case cf of SOME (c,f) => f | NONE => 
-                        (print ("\nConstructor with ill type" ^ (CoreML.Pat.visitPat pat) ^ "\n"); assertfalse ())
-                      val cf = unfoldRecursiveFrame cf tycon fs
-                      val fs = case cf of RFconstr (_, fs, _) => fs | _ => 
-                          (print ("\nConstrutor with ill type " ^ (pprint cf) ^ "\n"); assertfalse ()) 	
-                    in	
-                      (List.zip ((Pattern.pattern_extend arg), (fs)), [])
-                    end
-                  | RFconstr (tycon, fs, _) => 
-                    if (String.equals ("::", Con.toString con)) 
-                      then ([(List.first (Pattern.pattern_extend arg), List.first fs), 
-                                              (List.last (Pattern.pattern_extend arg), f)], [])
-                    else (print "\nShould supply a sum type\n"; assertfalse ())
-                  | _ => (print "\nShould supply a sum type\n"; assertfalse ())
-                  )
-              | (Pat.Const cf, f) => assertfalse ()
+                (Pat.Wild, _) =>  ([], [])
+              | (Pat.Var x, f) => ([], [(x, f)])
+              | (Pat.Con {arg=NONE,con=c,targs=targv},_) => ([],[])(*nothing to bind here*)
+              | (Pat.Con {arg=SOME pat',con=c,targs=targv},RFconstr(tycon, tyargfs, _)) =>
+              (* targv are instantiated typevars *)
+                let
+                  val _ = asserti ((List.length tyargfs = Vector.length targv),
+                    "Constructor tyargs error\n")
+                  val arg_pat_list = (case Pat.node pat' of
+                      Pat.Record tr => Vector.toListMap ((Record.toVector tr),snd)
+                    | Pat.Tuple tl => Vector.toList tl
+                    | _ => [pat'])
+                  val cargfs = fresh_constructor c tyargfs rexpr tm
+                  val _ = asserti ((List.length arg_pat_list = List.length cargfs), 
+                    "cons args pat mismatch\n")
+                in
+                  (List.zip (arg_pat_list,cargfs), []) 
+                end
               | (Pat.List ts, _) => ([], []) (* Currently we do not support list *)
               | (Pat.Record tr, RFrecord (fr, _)) => 
                   (List.zip(Vector.toList (Record.range tr), (List.map(fr, fn(a, b) => a))), [])
@@ -366,10 +371,64 @@ structure RelFrame : REL_FRAME =
                   (List.zip(Vector.toList ts, (List.map(fs, (fn(a, b) => a)))), [])
                 )
               | (Pat.Tuple ts, f) => ([(List.first (Vector.toList ts), f)], [])
-              | (Pat.Var x, f) => ([], [(x, f)])
-              | (Pat.Wild, _) =>  ([], [])
               | _ => (print "\nBind pat relframe get wrong\n"; assertfalse ())
            end
 		    in Common.expand mbind [(pat, relframe)] []
 		    end
+
+  (* Inserting refinements *)
+  fun apply_refinement r rf = case rf of
+      RFconstr (p, fl, _) => RFconstr (p, fl, r)
+    | RFrecord (fs, _) => RFrecord (fs, r)
+    | RFvar (a, _) => RFvar (a, r)
+    | f => f
+
+  fun map f fr = case fr of				
+      RFunknown => f fr
+    | RFvar (a, r) => f (RFvar (a, r))
+    | RFconstr (p, fs, r) => f (RFconstr (p, List.map (fs, (map f)), r))
+    | RFarrow (x, f1, f2) => f (RFarrow (x, map f f1, map f f2))
+    | RFrecord (fs, r) => f (RFrecord (List.map (fs, (fn (fr, n) => (map f fr, n))), r))
+		
+  fun map_refinements_map f fr = case fr of 		
+      RFconstr (p, fs, r) => RFconstr (p, fs, f r)
+    | RFrecord (fs, r) => RFrecord (fs, f r)
+    | RFvar (a, r) => RFvar (a, f r)
+    | f => f
+		
+  fun map_refinements f fr = map (map_refinements_map f) fr
+
+  (* Change the qualifiers so the referred variable relates to program unique var representation *)
+  (* Mainly let this work for Qconst *)
+  fun instantiate_qualifiers_map vars fr = case fr of 
+        (subs, RQconst qs) => (subs, RQconst (List.map (qs, (fn q => case (RQ.instantiate vars q) of SOME q => q | NONE => q))))
+        | r => r (* we keep Qvar intact *)
+
+		(* So all the program variables in a quliafier is related to the one in our language representation *)
+  fun instantiate_qualifiers vars fr =
+    map_refinements (instantiate_qualifiers_map vars) fr
+
+  fun label_like f f' =
+    let fun label vars f f' = case (f, f') of
+        (RFvar _, RFvar _) => (let val r = instantiate_qualifiers vars f in (r) end)
+      | (RFunknown, RFunknown) => instantiate_qualifiers vars f
+      | (RFconstr _, RFconstr _) => instantiate_qualifiers vars f
+      | (RFarrow (NONE, f1, f1'), RFarrow (l, f2, f2')) =>
+        RFarrow (l, label vars f1 f2, label vars f1' f2')
+      | (RFarrow (SOME p1, f1, f1'), RFarrow (SOME p2, f2, f2')) => 
+          let val vars' = List.map ((Pattern.bind_vars p1 p2), (fn (x, y) => (Var.toString x, y))) @ vars
+          in RFarrow (SOME p2, label vars f1 f2, label vars' f1' f2') end
+      | (RFrecord (f1s, r), RFrecord (f2s, _)) =>
+          let fun label_rec ((f1, n), (f2, _)) = (label vars f1 f2, n) 
+          in RFrecord (List.map2 (f1s, f2s, label_rec), r) end
+    in label [] f f' end
+
+  (* Inserting substitutions into refinements *)
+  fun apply_substitution_map sub fr = case fr of 
+      RFconstr (p, fs, (subs, qe)) => RFconstr (p, fs, (sub :: subs, qe))
+    | RFrecord (fs, (subs, qe)) => RFrecord (fs, (sub :: subs, qe))
+    | RFvar (a, (subs, qe)) => RFvar (a, (sub :: subs, qe)) 
+    | f => f
+  (*  Inserting susbstitutions into frames *)
+  fun apply_substitution sub f = map (apply_substitution_map sub) f
 	end

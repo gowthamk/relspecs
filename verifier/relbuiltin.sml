@@ -10,6 +10,7 @@ signature REL_BUILTIN =
 		
 		val qsize_str : Predicate.binrel -> Var.t -> Var.t -> Var.t -> Qualifier.t
 		
+    val mk_poly : Qualifier.t list -> RelFrame.t
 		val mk_int : Qualifier.t list -> RelFrame.t
 		val mk_string : Qualifier.t list -> RelFrame.t
 		val mk_bool : Qualifier.t list -> RelFrame.t
@@ -35,11 +36,9 @@ signature REL_BUILTIN =
 		
 		val frames : unit -> (Var.t * RelFrame.t) list
     
-		val equality_qualifier : Type_desc.type_desc -> Con.t ->  RelPredicate.rexpr -> RelQualifier.t
-
-		val and_frame : Predicate.t -> Predicate.t -> RelFrame.t 
+		(*val and_frame : Predicate.t -> Predicate.t -> RelFrame.t 
 		
-		val or_frame : Predicate.t -> Predicate.t -> RelFrame.t
+		val or_frame : Predicate.t -> Predicate.t -> RelFrame.t*)
 	end
 
 structure RelBuiltin (*: BUILTIN*) =
@@ -53,6 +52,9 @@ structure RelBuiltin (*: BUILTIN*) =
 		open RelFrame
 		open Common
 		open Smlsys
+
+    structure RP = RelPredicate
+    structure RQ = RelQualifier
 		
 		(* For array length constraint, y == z in this case *)
 		(*
@@ -220,7 +222,7 @@ structure RelBuiltin (*: BUILTIN*) =
 		
 		fun tag x = Predicate.FunApp(tag_function, [x])
 		
-		fun or_frame p1 p2 =
+		(*fun or_frame p1 p2 =
 			(reset_idents ();	
 		   	let val z = Var.fromString (fresh_ident ())
 		   	in   
@@ -236,23 +238,15 @@ structure RelBuiltin (*: BUILTIN*) =
 			end
 			)
 			
-		fun equality_qualifier con exp =
-			let 
-        val x = Var.mk_ident "V" 
-        val tyv = RP.make_typedvar(x)
-				val rpred = RP.requals (RP.make_rrel (con,tyv)) exp
-		   		val expstr = RP.pprint rpred 
-		   	in (Var.mk_ident expstr, tyv, rpred) end
-
 		fun not_frame p = 
 			(reset_idents ();
 			let val z  = Var.fromString (fresh_ident ())
 			in
 				rBool "not" z (riffo (tag (Predicate.PVar z)) (rnoto p))
 			end
-			)
+			) *)
 		
-		fun qbool_rel qname rel (z, r1, r2) = rBool qname z (riffo (tag (Predicate.PVar z)) (RPred ((RAtom (r1, rel, r2)))))
+		(*fun qbool_rel qname rel (z, r1, r2) = rBool qname z (riffo (tag (Predicate.PVar z)) (RPred ((RAtom (r1, rel, r2)))))*)
 		
 		(*
     fun poly_rel_frame path qname rel =
@@ -265,7 +259,6 @@ structure RelBuiltin (*: BUILTIN*) =
 		val mframes = [
 		          
 		]
-	
 		
 		fun frames () =
 			let 
@@ -274,12 +267,15 @@ structure RelBuiltin (*: BUILTIN*) =
 				resolve_names mframes
 			end
 
-		fun field_eq_qualifier name c rexp =
+		fun equality_refinement con rexp = ([], RQconst [RQ.equality_qualifier con rexp])
+		(*
+    fun field_eq_qualifier name c rexp =
 			let 
         val x = RP.make_typedvar (Var.mk_ident "x")
-		  	in (Var.mk_ident "<field_eq>", x, (equals (Field (name, PVar x)) pexp)) end
+		  	in (Var.mk_ident "<field_eq>", x, (equals (Field (name, PVar x)) rexp)) end
 		
 		fun proj_eq_qualifier n pexp =
 			let val x = Var.mk_ident "x" 
 			in (Var.mk_ident "<tuple_nth_eq>", x, (equals (Proj (n, PVar x)) pexp)) end
+    *)
 	end
