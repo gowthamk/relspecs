@@ -27,8 +27,8 @@ signature REL_PREDICATE =
   datatype rbinrel =
       REq
     | RNe
-    | RSubset
-    | RSuperset
+    | RSub
+    | RSup
 
   datatype rel_predicate =
       RAtom of rexpr * rbinrel * rexpr
@@ -51,6 +51,12 @@ signature REL_PREDICATE =
 		val pprint_rexpr: rexpr -> string*)
 
   val pprint: t -> string
+
+  val pprint_pred: rel_predicate -> string
+
+  val pprint_rexpr: rexpr -> string
+
+  val pprint_relem: relem -> string
 
   (* Update some predicate var with another instance of var *)
   val instantiate_named_vars: (string * Var.t) list -> t -> t
@@ -114,8 +120,8 @@ struct
   datatype rbinrel =
       REq
     | RNe
-    | RSubset
-    | RSuperset
+    | RSub
+    | RSup
 
   datatype rel_predicate =
       RAtom of rexpr * rbinrel * rexpr
@@ -148,9 +154,9 @@ struct
 
   fun rnequals p q = RPred (RAtom (p, RNe, q))
 
-  fun rsub p q = RPred (RAtom (p, RSubset, q))
+  fun rsub p q = RPred (RAtom (p, RSub, q))
 
-  fun rsup p q = RPred (RAtom (p, RSuperset, q))
+  fun rsup p q = RPred (RAtom (p, RSup, q))
 
   fun rando p q = RAnd (p, q)
 
@@ -209,4 +215,45 @@ struct
   
   fun instantiate_named_vars subs rpred =
     map_vars (fn y => (Common.assoc1 (Var.toString y) subs)) rpred
+
+  val subst = fn v => fn x => fn pred =>
+			map_vars (fn y => if (Var.logic_equals (x, y)) then v else y)
+
+  (* We do substitution here to perform substitution in pred. Note subs are map with x (string now) 
+		   as index mapped to an expression e *)
+		(* (Var.t * pexpr) list -> t -> t *)
+		(*val apply_substs = fn subs => fn pred =>
+			let 
+				val substitute = fn ((x, e), p) => subst e x p 
+			in 
+        "("^()^") "^()^"("^()^")"
+				simplify_pred (List.fold (subs, pred, substitute))
+			end*)
+  fun pprint_list l f s= String.concatWith ((List.map(l,f)),s)
+
+  fun pprint_rop rb = case rb of
+      REq => "="
+    | RNe => "!="
+    | RSub => "<"
+    | RSup => ">"
+
+  fun pprint_relem el = case el of
+      RVar v => Var.toString v
+    | RInt i => Int.toString i
+
+  fun pprint_rexpr rexpr = case rexpr of
+      RRel(c,v) => "R("^(Con.toString c)^","^(Var.toString v)^")"
+    | RSet el_list => "{"^(pprint_list el_list pprint_relem ",")^"}"
+    | RUnion re_list => pprint_list re_list pprint_rexpr " U "
+
+  fun pprint_pred pred = case pred of
+      RAtom (re1,rb,re2) => "("^(pprint_rexpr re1)^") "^(pprint_rop rb)^"("^(pprint_rexpr re2)^")"
+      
+
+  fun pprint t = case t of
+      RTrue => "true"
+    | RNot t1 => "~("^(pprint t1)^")"
+    | RAnd (t1,t2) => "("^(pprint t1)^") && ("^(pprint t2)^")"
+    | ROr (t1,t2) => "("^(pprint t1)^") || ("^(pprint t2)^")"
+    | RPred pred => pprint_pred pred
 end

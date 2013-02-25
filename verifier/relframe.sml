@@ -130,13 +130,66 @@ structure RelFrame : REL_FRAME =
 		(* false refinement variable *)
 		val false_refinement = ([], RQconst [(Var.mk_ident "false", Var.mk_ident "V", RNot (RTrue))])
 
-
 		fun unique_name v = Var.toString v
-    (* pprint should come here *)
-    fun pprint f = "pprint not impl"
 
-    fun pprint_refinement refn = "pprint_refinement not impl"
+		fun pprint_refinement refi = case refi of
+        (_, RQvar (id, _) ) => unique_name id
+      | (subs, RQconst []) => "true"
+      | (subs, RQconst quals) =>
+        let 
+          (* pprint should be dumb *)
+         (* val preds = List.map (quals, (RQ.apply (RP.PVar (Predicate.Var.mk_ident "V"))))*)
+          val preds = List.map (quals, (fn (_,_,p) => p))
+          (*val preds = List.map (preds, (RP.apply_substs subs))*)
+        in
+           (List.fold (subs, "", (fn ((v,el),str) => str^"["^(RP.pprint_relem el)^"/"^(unique_name v)^"]")))^
+           "("^(List.fold (preds, "", (fn (pred, str) => str ^ (RP.pprint pred))))^")"
+        end
 		
+		fun pprint_pattern pat = 
+			let val patnode = Pat.node pat
+			in
+				case patnode of 
+					  Con {arg, con, targs} => (CoreML.Con.toString con) ^ (case arg of SOME p' => pprint_pattern p' | NONE => "")
+             		| Const f => CoreML.Const.toString (f())
+             		| List ts => pprint_pattern_list ts
+             		| Record tr => pprint_pattern_record tr
+             		| Tuple ts => pprint_pattern_vector ts
+             		| Var var => CoreML.Var.toString var
+             		| Wild =>  "_"
+             		| _ => assertfalse () 
+             end
+     	
+		and pprint_pattern_vector pats = "("^(Vector.fold (pats, "", (fn (pat, str) => (str ^ (pprint_pattern pat) ^ ", "))))^")" 
+		
+		and pprint_pattern_list pats = Vector.fold (pats, "", (fn (pat, str) => (str ^ (pprint_pattern pat) ^ ", "))) 
+
+		and pprint_pattern_record pats = Vector.fold (Record.toVector pats, "", (fn ((field, ppat), str) => (str ^ "Field " ^ (Field.toString field) ^ 
+															"Pat " ^ (pprint_pattern ppat))))
+
+  fun wrap_refined q =
+    case q of
+        (_, RQconst []) => "true"
+        | r => pprint_refinement r
+
+  fun pprint_list l f s= String.concatWith ((List.map(l,f)),s)
+
+  fun pprint_list2 l s = 
+  let
+    val prnt = fn (rf,field) => field^" : "^(pprint rf)
+  in
+    pprint_list l prnt ","
+  end
+
+  and pprint rf= case rf of 
+      RFvar (a, r) => "{" ^ (unique_name a) ^ "|"^(wrap_refined r)^"}"
+    | RFconstr (path, [], r) => "{" ^ (Tycon.toString path) ^ " | "  ^ (wrap_refined r) ^ "}" 
+    | RFconstr (path, l, r) => "{ ("^(pprint_list l pprint ",")^") "^(Tycon.toString path)^" | " ^ (wrap_refined r) ^ "}"
+    | RFarrow (NONE, f, f') => "{" ^ (pprint f) ^ " -> " ^ (pprint f') ^ "}"
+    | RFarrow (SOME pat, f, f') => "{ {" ^ (pprint_pattern pat) ^ " : "^(pprint f)^"} -> " ^ (pprint f') ^ "}"
+    | RFrecord (l, r) => "{(" ^ (pprint_list2 l "*")^") |  " ^ (wrap_refined r) ^ "}"
+    | RFunknown => "[unknown]"
+
 		fun unfoldRecursiveFrame fr tc subfs =
 				case fr of				
               RFunknown => fr
@@ -336,10 +389,6 @@ structure RelFrame : REL_FRAME =
 						val patnode = Pat.node pat
 					in
 						case (patnode, relframe) of 
-							  (* Note: f should be a constructor relframe, parameter type_desc is a list 
-							   * arg is the parameters for the constructor. Ideally it should be a tuple or just 
-							   * one element
-							   *)
                 (Pat.Wild, _) =>  ([], [])
               | (Pat.Var x, f) => ([], [(x, f)])
               | (Pat.Con {arg=NONE,con=c,targs=targv},_) => ([],[])(*nothing to bind here*)

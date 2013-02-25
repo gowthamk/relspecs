@@ -187,6 +187,7 @@ structure Frame : FRAME =
 		 	case f of 
 		 		  f as (Farrow _) => "{ " ^ (pprint f) ^ " }" 
 		 		| f as _  => pprint f
+
 		 and pprint_list sep fs = let val str= List.fold (fs, "", (fn (f, str) => (str ^ (pprint f) ^ sep))) 
 		 							  val str_len = String.length str
 		 							  val sep_len = String.length sep

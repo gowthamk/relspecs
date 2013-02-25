@@ -194,10 +194,7 @@ struct
               else Predicate.PVar (Var.mk_ident "dummy") 
             end
       )
-      | Exp.Record r => (
-        if (Vector.length (Record.toVector r) = 0) then Predicate.PVar (Var.fromString "dummy")
-        else Predicate.PVar (Var.mk_ident "dummy")
-      ) 
+      | Exp.Record r => Predicate.PVar (Var.mk_ident "dummy") 
       | _ => Predicate.PVar (Var.mk_ident "dummy")
   
   fun matchcase_exp_to_pexpr e = (* returns pexpr list *)
@@ -718,7 +715,7 @@ struct
           val rexpr = expression_to_rexpr e
           val argsupfs = RF.fresh_constructor c tyargfs rexpr tycon_map
           val refn = RF.fresh_refinement (RQ.equality_qualifier c rexpr)
-          val rf = case rf of RF.RFconstr (p,fs,_) => RF.RFconstr (p,fs,refn) | _ => fail ""
+          val rf' = case rf of RF.RFconstr (p,fs,_) => RF.RFconstr (p,fs,refn) | _ => fail ""
           (* Seeking the formal types of arguments *)
           val cstrargs = case f of 
               F.Fconstr (_, fl, _) => fl 
@@ -729,7 +726,10 @@ struct
             constrain_subexprs env renv guard args polymatching_table
           val _ = print "go here\n"
           val rel_env = (env,renv,guard)
-          val rstrs = RCs.WFRFrame (rel_env,rf)::(List.map2 (argsubfs,argsupfs,
+          val rstrs = RCs.WFRFrame (rel_env,rf)::
+            RCs.WFRFrame (rel_env,rf')::
+            RCs.SubRFrame(rel_env,rf',rf)::
+            (List.map2 (argsubfs,argsupfs,
             (fn (rsub,rsup) => RCs.SubRFrame(rel_env,rsub,rsup))))
         in
             (* this should fail *)

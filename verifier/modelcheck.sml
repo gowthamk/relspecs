@@ -13,6 +13,9 @@ structure Modelcheck =
 		open Common
 		open HashTable
 		open Frame
+
+    structure Cs = Constraint
+    structure RCs = RelConstraint
 		
 		type binding_id = int
 		
@@ -1282,8 +1285,13 @@ structure Modelcheck =
 				(* val cs = (List.map ((Le.maplistfilter (mfm fenv) ifenv), (lbl_dummy_cstr))) @ cs *)
 				val _ = print ("\nThe inferred constraints with a total number of " ^ (Int.toString (List.length cs)) ^ " are shown below \n")
 				val _ = List.foreachi (cs, (fn (i,c) => 
-						(print (Int.toString i); print ": "; print (Constraint.pprint (case c of lc c' => #lc_cstr c')); print "\n")))
+						(print (Int.toString i); print ": "; print (Constraint.pprint (case c of Cs.lc c' => #lc_cstr c')); print "\n")))
 				val _ = print ("the final env is " ^ Constraint.pprint_pure_env fenv)
+        val _ = print "**********************************************************\n"
+        val _ = print ("The inferred Relation Constraints with a total number of " ^ (Int.toString (List.length rcs)) ^ " are shown below \n")
+				val _ = List.foreachi (rcs, (fn (i,c) => 
+						(print (Int.toString i); print ": "; print (RCs.pprint (case c of RCs.lc c' => #lc_cstr c')); print "\n")))
+				val _ = print ("the final env is " ^ RCs.pprint_pure_renv renv)
 				(* Filter out all the builtin in fun calls *)
 				val cdeps = List.removeAll ((!call_deps), fn (pat1, pat2) => 
 					(List.exists (builtinfuns, fn f => Var.logic_equals (Constraintgen.pat_var pat2, f))) orelse
