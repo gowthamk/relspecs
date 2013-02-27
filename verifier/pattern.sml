@@ -111,7 +111,15 @@ structure Pattern : PATTERN =
               in
                 List.fold2 (rpat_list,flags,([],[]),(fn(a,b,c) => (atoms_to_rexpr a b c)))
               end
-            | _ =>(print "Invalid constructor args in pattern\n";assertfalse()) 
+            | CoreML.Pat.Tuple pat_vec => 
+              let
+                val rpat_list = Vector.toList pat_vec
+                val _ = asserti ((List.length rpat_list = List.length flags),
+                  "Recorded constructor args pattern not agree\n")
+              in
+                List.fold2 (rpat_list,flags,([],[]),(fn(a,b,c) => (atoms_to_rexpr a b c)))
+              end
+            | _ =>fail ("Invalid constructor args in pattern : "^(CoreML.Pat.visitPat pat')^"\n")
           )
         in
           SOME (RP.make_runion ((RP.make_rset l1)::l2))
@@ -130,6 +138,7 @@ structure Pattern : PATTERN =
           val varlist = Vector.toListMap ((Record.toVector recrd),snd)
           val _ = asserti ((List.length varlist = List.length relemlist),
             "bind_relem error\n")
+          val _ = assertl(varlist,relemlist,"assertl - varlist, relemlist")
           val sublist = List.fold2(varlist,relemlist,[],
             (fn(p,r,l)=>l@(bind_relem p [r])))
         in

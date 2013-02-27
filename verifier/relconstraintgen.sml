@@ -122,6 +122,7 @@ struct
                     | _ => fail "Constructor args should contain only atoms\n"
 
                   )
+                  val _ = assertl (conargs,flags,"assertl - conargs,flags\n")
                   val (l1,l2) = List.fold2(conargs,flags,([],[]),separate)
                   val set = RP.make_runion ((RP.make_rset l1)::l2)
                 in
@@ -395,10 +396,6 @@ struct
       constrain_rec initfenv initrenv guard [] [] pdecs 
     end
       
-  and constrain_and_bind_stub g p pat = (Le.empty 0, RLe.empty 0, [], [])
-
-  and constrain_subexprs_stub u_e g e pats p_t = ([],[],[],[])
-
   and constrain_bindings env renv guard recflag bindings polymatching_table =
     case recflag of (* return Le.t*(Constraint.labeled_constraint list) *)
       false => List.fold (
@@ -416,9 +413,12 @@ struct
         val unlabeled_rframes = List.map (exprs, (fn e => RF.fresh (Type.toMyType (Exp.ty e)) tycon_map))
         val unlabeled_env = bind_all fbindings unlabeled_frames env
         val unlabeled_renv = rbind_all rbindings unlabeled_rframes renv
-        val (label_frames,_,label_rframes,_) = constrain_subexprs_stub unlabeled_env unlabeled_renv 
+        val (label_frames,label_rframes,_,_) = constrain_subexprs unlabeled_env unlabeled_renv 
                                                    guard exprs polymatching_table
-        val binding_frames = List.map2 (unlabeled_frames, label_frames, (fn (a, b) => F.label_like a b)) 
+        val _  = assertl (unlabeled_rframes, label_rframes, "assertl - unlabeled_rframes, label_rframes")
+        val _  = assertl (unlabeled_frames, label_frames, "assertl - unlabeled_frames, label_frames")
+        (*val binding_frames = List.map2 (unlabeled_frames, label_frames, (fn (a, b) => F.label_like a b)) *)
+        val binding_frames = label_frames (* TO BE REMOVED *)
         val binding_rframes = List.map2 (unlabeled_rframes, label_rframes, (fn (a, b) => RF.label_like a b)) 
         (* Redo constraints now that we know what the right labels are *)
         val bound_env = bind_all fbindings binding_frames env
@@ -445,9 +445,13 @@ struct
    * If pexpr is a function call, and pat is a tuple/record, we name a distinct variable for this pat. And bing it in the env.
    *)
   and tbind env pat frame pexpr =
-    let val env = case (Pat.node pat, frame, pexpr) of
+    let 
+      val _ = print ("PatBind: "^(CoreML.Pat.visitPat pat)^" with \n"^
+        "[F] "^(F.pprint frame)^"\n"^
+        "[Pexpr] "^(P.pprint_pexpr pexpr)^"\n")
+      val env = (*case (Pat.node pat, frame, pexpr) of (* A little sanity *)
             (Pat.Tuple _, Frame.Frecord _, Predicate.PVar record_var) => Le.env_bind_record env pat frame record_var
-            | _ => Le.env_bind env pat frame
+            | _ =>*) Le.new_env_bind env pat frame tycon_map
     in
       (* everything except wild and var is deep *)
       if Pattern.is_deep pat then
@@ -460,6 +464,9 @@ struct
   and rbind renv pat rframe rexpr =
   let
     val renv = RLe.env_bind renv pat rframe rexpr tycon_map
+    val _ = print ("PatRelBind: "^(CoreML.Pat.visitPat pat)^" with \n"^
+      "[RF] "^(RF.pprint rframe)^"\n"^
+      "[Rexpr] "^(RP.pprint_rexpr rexpr)^"\n")
   in
     if (Pattern.is_deep pat) then
       RLe.add (Var.mk_ident "pattern")
@@ -479,7 +486,7 @@ struct
        * we are binding current patten with test's frame. 
        * So, (x,y) pat is bound to {v|v.1=x0 /\ v.2=x1}  
        *)
-      val env = Le.env_bind env pat frame
+      val env = Le.new_env_bind env pat frame tycon_map
     in
       if Pattern.is_deep pat then (
         case (Pat.node pat) of 
@@ -591,7 +598,7 @@ struct
             val tylist = List.map (TM.get_argtys_by_cstr tycon_map c handle Not_found => [],fst)
             val t = Tconstr (tycon1, tylist)
             val sumf = #3 environment
-            val f = case sumf of
+            (*val f = case sumf of
                 F.Fsum (_, fs, _) => 
                 let val f = List.peek (fs, fn (c', f) => Con.equals (c, c'))
                   val f =  case f of SOME (_,f) => f | NONE => (print "\nIll type from a datatype\n"; assertfalse ())
@@ -599,10 +606,10 @@ struct
               | F.Fconstr (tcc, fls, r) => 
                 if (String.equals ("::", Con.toString c)) then F.Fconstr (tcc, (List.first fls :: fls), r) (* This is considered as unsafe *)
                 else sumf
-              | _ => (print "\nIll sum type from a datatype\n"; assertfalse ())	      								
+              | _ => (print "\nIll sum type from a datatype\n"; assertfalse ())*)
             val rf = #3 renvironment
           in
-            constrain_constructed (env, guard, f) (renv, guard, rf) e t e2list polymatching_table
+            constrain_constructed (env, guard, sumf) (renv, guard, rf) e t e2list polymatching_table
           end
         | (Exp.Var (var, targs)) => 
           let
@@ -698,7 +705,7 @@ struct
        | Const.Real _ => (B.uFloat, RB.uFloat)
        | Const.Word n => 
           (B.mk_int [B.equality_qualifier (P.PInt (IntInf.toInt (WordX.toIntInfX n)))], RB.uInt)
-       | Const.WordVector _ => assertfalse ()
+       | Const.WordVector _ => fail "Can't constrain wordvector constant\n"
      )
   
   (* 
@@ -710,35 +717,36 @@ struct
     case f of
       F.Fconstr (path, tyargframes, refn) =>
         let 
-          val c = case Exp.node e of Exp.Con(c',_) => c' | _ => fail "." 
-          val tyargfs = case rf of RF.RFconstr (_,fs,_) => fs | _ => fail "RFconstr expected"
+          val c = case Exp.node e of Exp.App(e1,e2) => (case Exp.node e1 of
+                Exp.Con(c',_) => c' | _ => fail "Not a constructor application\n")
+            | _ => fail "Not even an application\n"
+          val tyargfs = case rf of RF.RFconstr (_,fs,_) => fs | _ => fail "RFconstr expected\n"
           val rexpr = expression_to_rexpr e
           val argsupfs = RF.fresh_constructor c tyargfs rexpr tycon_map
+          val argsupframes = F.fresh_constructor c f tycon_map
           val refn = RF.fresh_refinement (RQ.equality_qualifier c rexpr)
           val rf' = case rf of RF.RFconstr (p,fs,_) => RF.RFconstr (p,fs,refn) | _ => fail ""
-          (* Seeking the formal types of arguments *)
-          val cstrargs = case f of 
-              F.Fconstr (_, fl, _) => fl 
-            | _ => fail ("\nConstructor with ill type " ^ (Frame.pprint f) ^ "\n")
-          (* Seeking the actual types of args which are actuals *)
           val _ = print "go here0\n"
-          val (argframes,argsubfs,argcstrs,argrstrs) = 
+          val (argsubframes,argsubfs,argcstrs,argrstrs) = 
             constrain_subexprs env renv guard args polymatching_table
           val _ = print "go here\n"
           val rel_env = (env,renv,guard)
+          val _ = assertl (argsubfs,argsupfs,"assertl - argsubfs,argsupfs")
           val rstrs = RCs.WFRFrame (rel_env,rf)::
             RCs.WFRFrame (rel_env,rf')::
             RCs.SubRFrame(rel_env,rf',rf)::
             (List.map2 (argsubfs,argsupfs,
             (fn (rsub,rsup) => RCs.SubRFrame(rel_env,rsub,rsup))))
+          val cstrs = Cs.WFFrame(env, f) :: 
+            (List.map2 (argsupframes, argsubframes,
+            (fn (arg, formal) => Cs.SubFrame(env, guard, arg, formal))))
         in
             (* this should fail *)
             (* cstr args are frames for tyargs of current type *)
             (* argframes are frames of args of valcon. *)
             (* subtyping among them isn't meaningful *)
-            (f,rf,
-             Cs.WFFrame(env, f) :: (List.map2 (argframes, cstrargs, (fn (arg, formal) => Cs.SubFrame(env, guard, arg, formal)))),
-             rstrs,argcstrs,argrstrs) end
+            (f,rf,cstrs,rstrs,argcstrs,argrstrs) 
+         end
         | _ => fail "Fconstr expected\n"
   
   and is_sum_type ty = case ty of
@@ -771,6 +779,7 @@ struct
                 (* In case of tuples, names are "1", "2".. So, qualifier would
                    be x11.1 = pfexp1, x11.2 = pfexp2...*)
                 val ret_f = F.Frecord (recframes, ([], F.Qconst (List.map2 (recframes, sorted_exprs, field_qualifier))))
+                val _ = assertl (subframes, recframes, "assertl:subframes-recframes\n")
                 val (cur_cs : Cs.frame_constraint list) = Cs.WFFrame (env, f) :: List.fold2 (subframes, recframes, [], subframe_field)
                 val (slist : Cs.frame_constraint list) = lcstrs_to_fcstrs subexp_cs
                 val ret_cs = cur_cs@slist
@@ -790,6 +799,7 @@ struct
                   else
                     acc
                 end
+                val _ = assertl (recframes,sorted_exprs,"assertl - recframes,sorted_exprs\n")
                 val ref_rquals = List.fold2(recframes,sorted_exprs,[],field_rqualifier_list)
                 val refn = if(List.length ref_rquals > 0) 
                   then ([],RF.RQconst ref_rquals) 
@@ -799,6 +809,7 @@ struct
                 val refn = RF.empty_refinement
                 val ret_rf = RF.RFrecord (recrframes,refn)
                 val rel_env = (env,renv,guard)
+                (*val _ = assertl (recrframes,subrframes,"assertl - recrframes,subrframes\n")*)
                 (*val (cur_rcs : RCs.rframe_constraint list) = 
                   RCs.WFRFrame (rel_env, rf) :: List.fold2 (subrframes, recrframes, [], subrframe_field rel_env)*)
                 val cur_rcs = []
@@ -822,7 +833,7 @@ struct
       val (renv,_,rf) = renvironment
       (* guard updated with correct guard value *)
       val guard = (guardvar, i, true) :: guard
-      val env = matchcase_tbind env pat matchf match_pexpr
+      val env = tbind env pat matchf match_pexpr
       (* Now, env contains mapping bewteen  
          1. pat frame and matchf
          2. forevery pat' inside pat and
@@ -909,7 +920,7 @@ struct
         (* env is extended with (guardvar -> test_frame) mapping *)
         val env' = Le.add guardvar f1 env
         val environment = (env', guard, f)
-        val test_pexpr = matchcase_exp_to_pexpr e
+        val test_pexpr = expression_to_pexpr e
         val test_rexpr = expression_to_rexpr e (* no spl treatment*)
         val cases = List.mapi (pexps, fn (i, (pat, e')) => 
             (constrain_case environment renvironment matchf matchrf test_pexpr test_rexpr polymatching_table 
@@ -933,7 +944,7 @@ struct
       in case (f,rf) of
           (F.Farrow (_, f, unlabelled_f'),RF.RFarrow (_,rf,unlabelled_rf')) =>
             (* \pat.e --> Gamme;guard;pat:f |- e:?? *)
-            let val env' = Le.env_bind env pat f
+            let val env' = Le.new_env_bind env pat f tycon_map
             val renv' = RLe.env_bind renv pat rf 
               (expression_to_rexpr e') tycon_map
             val (f'', rf'',cstrs,rstrs) = constrainExp e' env' renv' guard 

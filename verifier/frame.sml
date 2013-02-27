@@ -35,10 +35,11 @@ signature FRAME =
 		val fresh: CoreML.Type_desc.type_desc -> TyconMap.t -> t
 		val fresh_without_vars: CoreML.Type_desc.type_desc -> TyconMap.t -> t
 		val fresh_unconstrained: CoreML.Type_desc.type_desc -> TyconMap.t -> t
-		(*val fresh_constructor: CoreML.Type_desc.type_desc -> t -> t list*)
+		val fresh_constructor: Con.t -> t -> TyconMap.t -> t list
 		val instantiate: t -> t -> (Var.t, Var.t) HashTable.hash_table -> t
 		val instantiate_qualifiers: (string * Var.t) list -> t -> t
 		val bind: CoreML.Pat.t -> t -> (Var.t * t) list
+		val new_bind: CoreML.Pat.t -> t -> TyconMap.t -> (Var.t * t) list
 		val bind_index : CoreML.Pat.t -> t -> (Var.t * (t * string option)) list (* we want a string represting its index (key) *)
 		val bind_record : CoreML.Pat.t -> t -> Var.t -> (Var.t * t) list
 		
@@ -174,15 +175,15 @@ structure Frame : FRAME =
 		
 		fun pprint frame = 
 			case frame of 
-				  Fvar (a, r) => "Var (" ^ (unique_name a) ^ ")"
-		  		| Fconstr (path, [], r) => "{" ^ (Tycon.toString path) ^ " | "  ^ (wrap_refined r) ^ "}" 
-		  		| Farrow (NONE, f, f') => "{" ^ (pprint1 f) ^ " -> " ^ (pprint f') ^ "}"
-		  		| Farrow (SOME pat, f, f') => "{" ^ (pprint_pattern pat) ^ " : " ^ (pprint1 f) ^ " -> " ^ (pprint1 f') ^ "}"
-		  		| Fconstr (path, l, r) => "{" ^ (Tycon.toString path) ^ (pprint_list "," l) ^ " | " ^ (wrap_refined r) ^ "}"
-		  		| Frecord (l, r) => "(" ^ (pprint_list2 "*" l) ^ " |  " ^ (wrap_refined r) ^ ")"
-		  		| Fsum (path, l, r) => "{" ^ (Tycon.toString path) ^ "." ^ (pprint_list3 "+" l) ^ " | " ^ (wrap_refined r) ^ "}"
-		  		| Funknown => "[unknown]"
-		 
+          Fvar (a, r) => "{" ^ (unique_name a) ^ "|"^(wrap_refined r)^"}"
+        | Fconstr (path, [], r) => "{" ^ (Tycon.toString path) ^ " | "  ^ (wrap_refined r) ^ "}" 
+        | Fconstr (path, l, r) => "{ ("^(pprint_list  "," l)^") "^(Tycon.toString path)^" | " ^ (wrap_refined r) ^ "}"
+        | Farrow (NONE, f, f') => "{" ^ (pprint f) ^ " -> " ^ (pprint f') ^ "}"
+        | Farrow (SOME pat, f, f') => "{ {" ^ (pprint_pattern pat) ^ " : "^(pprint f)^"} -> " ^ (pprint f') ^ "}"
+        | Frecord (l, r) => "{(" ^ (pprint_list2 "*" l)^") |  " ^ (wrap_refined r) ^ "}"
+        | Fsum (path, l, r) => "{" ^ (Tycon.toString path) ^ " : [" ^ (pprint_list3 "+" l) ^ "] | " ^ (wrap_refined r) ^ "}"
+        | Funknown => "[unknown]"
+
 		 and pprint1 f = 
 		 	case f of 
 		 		  f as (Farrow _) => "{ " ^ (pprint f) ^ " }" 
@@ -514,41 +515,32 @@ structure Frame : FRAME =
 			let fun fresh_rec freshf tyconslist t =  (* We will have recursive types. And only the very top definition can be extensively formulated *)
 		    	case t of
                 (* For type variables, we just have frame vars *)
-		        	  Type_desc.Tvar tvar => fresh_fvar ()
-		      		| Type_desc.Tconstr(p, tyl) => (
-                (* A typeconstr is in datatype table only if it has been defined with 
-                   datatype declaration *)
-	      				if (TM.tycon_mem tm p) then (
-		      				let 
-                    val conlist = TM.get_tycon_def tm p
-		      					val fs = 
-		      						if (List.exists (tyconslist, fn ty_cons => Tycon.equals (ty_cons, p))) then
-                        (* have I seen this tycon before? Yes, then set cons->frame map to [] ??*)
-                        (* we come here only during recursive type reference from a constructor *)
-                        (* any references to type being defined, will not contain a cons->frame mapping*)
-		      							[]
-		      						else
-		      							List.map (conlist, fn (con, tylist) => (* analyze *)
-                          (* else, for my every constructor, create a cons->frame map, adding me to
-                             the list of seen tycons *)
-		      								(con, Fconstr (p, (List.map (tylist, (fresh_rec freshf (p::tyconslist)))), freshf()))
-		      								(*(con, (fresh_rec freshf (p::tyconslist) (Type_desc.Tconstr (p, tylist))))*)
-										)
-                  in
-                    Fsum (p, fs, freshf()) 
-                  end)
-		      			else
-                  (* Not a sum datatype. Just type. *)
+                Type_desc.Tvar tvar => 
                   let
-		      				  val frame = Fconstr (p, (List.map (tyl, (fresh_rec freshf tyconslist))), freshf()) 
-                    val _ = print ("\nFconstr frame -- "^(pprint frame)^"\n")
+                    val vfopt = (List.peek (!vars, (fn(v,f)=>(Tyvar.equals(v,tvar)))))
+                  in
+                    case vfopt of
+                      SOME (v,f) => f
+                    | NONE => let val fv = fresh_fvar() in 
+                        (List.push (vars,(tvar,fv)); fv) end
+                  end
+              | Type_desc.Tconstr(p, tyl) => (
+                if (TM.tycon_mem tm p) then
+                  let
+                    (* foreach tyarg, generate frame.
+                       returns old frame if tyarg is in !vars *)
+                    val tyfs = List.map (tyl,(fresh_rec freshf tyconslist))
+                  in
+                    Fconstr (p,tyfs,freshf())
+                  end
+                else
+                  let
+                    val tyfs = List.map (tyl,(fresh_rec freshf tyconslist))
+                    val frame = Fconstr (p, tyfs,freshf()) 
+                    (*val _ = print ("\nRFconstr frame -- "^(pprint frame)^"\n")*)
                   in
                     frame
-                  end
-
-                  (* wouldn't that assign same refinement_var to all types in 'a 'b list? *)
-                  (* No. fresh_rec calls freshf thunk to create new ref_vars with T assignment *)
-		      		)
+                  end)
 		      		| Type_desc.Tarrow(t1, t2) => Farrow (NONE, fresh_rec freshf tyconslist t1, fresh_rec freshf tyconslist t2)
 		      		| Type_desc.Ttuple fields => 
 			      		let fun fresh_field mt = case mt of 
@@ -580,7 +572,49 @@ structure Frame : FRAME =
 				end
 			| _ => assertfalse ()
 		*)			
-			
+    fun fresh_constructor c f tm = case f of
+      Fconstr (tycon,tyvarfs,_) =>
+        let
+          val tyvars = TM.get_tyvars_by_cstr tm c
+          val _ = asserti((List.length tyvars = List.length tyvarfs),
+            "Frame : valcon tyargs not same as tycon tyargs\n")
+          val tyargmap = ref (List.zip (tyvars,tyvarfs))
+          val argtylist = (TM.get_argtys_by_cstr tm c
+            handle Not_found => (print "Unknown cons";assertfalse()))
+          val fresh_ref = fn _ => fresh_refinementvar Top
+          fun cons_rec (t,flag) = 
+          let
+            val new_f = (fn _ => fresh_with_var_fun tyargmap t (fn _ => fresh_refinementvar Top) tm)
+          in
+            if (not flag) then new_f() else f (*recursive unfolding *)
+          end
+        in
+          (* for every ty in argtylist, create a new frame. Reuse tyvar frames. *)
+          (* We do not use same frames for recursive args. Why? because relational
+             properties are not satisfiable recursively *)
+          List.map (argtylist,cons_rec)
+        end
+      | _ => fail "Frame : Fconstr expected\n"
+		
+    (*(Pat.Con {arg, con, targs}, f) => (case f of 
+                    Fsum (tycon, fs, _) =>
+                      let val cf = List.peek (fs, fn (c, f) => Con.equals (c, con))
+                        val cf = case cf of SOME (c,f) => f | NONE => 
+                          (print ("\nConstructor with ill type" ^ (CoreML.Pat.visitPat pat) ^ "\n"); assertfalse ())
+                        val _ = print ("\ncf is " ^ (pprint cf) ^ "\n")
+                        val cf = unfoldRecursiveFrame cf tycon fs
+                        val fs = case cf of Fconstr (_, fs, _) => fs | _ => 
+                            (print ("\nConstrutor with ill type " ^ (pprint cf) ^ "\n"); assertfalse ()) 	
+                      in	
+                        (List.zip ((Pattern.pattern_extend arg), (fs)), [])
+                      end
+                    | Fconstr (tycon, fs, _) => 
+                      if (String.equals ("::", Con.toString con)) then ([(List.first (Pattern.pattern_extend arg), List.first fs), 
+                                                (List.last (Pattern.pattern_extend arg), f)], [])
+                      else (print "\nShould supply a sum type\n"; assertfalse ())
+                    | _ => (print "\nShould supply a sum type\n"; assertfalse ())
+                    ) *)
+
 		fun bind pat frame =
 			let 
 				fun mbind (pat, frame) =
@@ -638,6 +672,48 @@ structure Frame : FRAME =
 		             end
 		    in Common.expand mbind [(pat, frame)] []
 		    end
+
+		fun new_bind pat frame tm =
+			let 
+				fun mbind (pat, frame) =
+					let (*val _ = print ("\nFrame binding pat frame with pat as " ^ (CoreML.Pat.visitPat pat) ^ " frame as " ^ (pprint frame) ^ "\n")*)
+						val patnode = Pat.node pat
+					in
+						case (patnode, frame) of 
+              (Pat.Con {arg=NONE,con=c,targs=targv},_) => ([],[])(*nothing to bind here*)
+            | (Pat.Con {arg=SOME pat',con=c,targs=targv},Fconstr(tycon, tyargfs, _)) =>
+              (* targv are instantiated typevars *)
+              let
+                val _ = asserti ((List.length tyargfs = Vector.length targv),
+                  "Frame : Constructor tyargs error\n")
+                val arg_pat_list = (case Pat.node pat' of
+                    Pat.Record tr => Vector.toListMap ((Record.toVector tr),snd)
+                  | Pat.Tuple tl => Vector.toList tl
+                  | _ => [pat'])
+                val cargfs = fresh_constructor c frame tm
+                val _ = asserti ((List.length arg_pat_list = List.length cargfs), 
+                  "Frame : cons args pat mismatch\n")
+              in
+                (List.zip (arg_pat_list,cargfs), []) 
+              end
+            | (Pat.Con _,Fsum _) => fail "Life gave us Fsum\n"
+            | (Pat.Const cf, f) => assertfalse ()
+            | (Pat.List ts, _) => ([], []) (* Currently we do not support list *)
+            | (Pat.Record tr, Frecord (fr, _)) => (List.zip(Vector.toList (Record.range tr), (List.map(fr, fn(a, b) => a))), [])
+            | (Pat.Tuple ts, Frecord (fs, _)) => 
+              if ((List.length fs) = 0) then (* means unit *)
+                ([], []) (* nothing to bind here *)
+              else if ((List.length fs) > 1 andalso (Vector.length ts) = 1) then 
+                ([(Vector.last ts, frame)], [])
+              else
+                (List.zip(Vector.toList ts, (List.map(fs, (fn(a, b) => a)))), [])
+            | (Pat.Tuple ts, f) => ([(List.first (Vector.toList ts), f)], [])
+            | (Pat.Var x, f) => ([], [(x, f)])
+            | (Pat.Wild, _) =>  ([], [])
+            | _ => (print "\nBind pat frame get wrong\n"; assertfalse ())
+         end
+      in Common.expand mbind [(pat, frame)] []
+      end
 		
 		fun bind_index pat frame =
 			let 
@@ -701,41 +777,18 @@ structure Frame : FRAME =
 							)
 					in
 						case (patnode, frame) of 
-							  (* Note: f should be a constructor frame, parameter type_desc is a list 
-							   * arg is the parameters for the constructor. Ideally it should be a tuple or just 
-							   * one element
-							   *)
-							  (Pat.Con {arg, con, targs}, f) => (case f of 
-					  			Fsum (tycon, fs, _) =>
-					  				let val cf = List.peek (fs, fn (c, f) => Con.equals (c, con))
-					  					val cf = case cf of SOME (c,f) => f | NONE => 
-					  						(print ("\nConstructor with ill type" ^ (CoreML.Pat.visitPat pat) ^ "\n"); assertfalse ())
-					  					val _ = print ("\ncf is " ^ (pprint cf) ^ "\n")
-					  					val cf = unfoldRecursiveFrame cf tycon fs
-					  					val fs = case cf of Fconstr (_, fs, _) => fs | _ => 
-					  							(print ("\nConstrutor with ill type " ^ (pprint cf) ^ "\n"); assertfalse ()) 	
-					  				in	
-					  					(List.zip ((Pattern.pattern_extend arg), (fs)), [])
-					  				end
-					  			| _ => (print "\nShould supply a sum type\n"; assertfalse ())
-					  			)
-		             		| (Pat.Const cf, f) => assertfalse ()
-		             		| (Pat.List ts, _) => assertfalse () (* Currently we do not support list *)
-		             		| (Pat.Record tr, Frecord (fr, _)) => (List.zip(Vector.toList (Record.range tr), (List.map(fr, fn(a, b) => a))), [])
-		             		| (Pat.Tuple ts, Frecord (fs, r)) => 
-		             			if ((List.length fs) = 0) then (* means unit *)
-		             				([], [(Var.mk_ident "", Fconstr(Tycon.defaultInt (), [], empty_refinement))])
-		             			else if ((List.length fs) > 1 andalso (Vector.length ts) = 1) then (
-		             				([(Vector.last ts, frame)], [])
-		             			)
-		             			else ( 
-		             				(List.zip(Vector.toList ts, (List.map(fs, (fn(a, b) => a)))), [(record_var, Fconstr(Tycon.defaultInt (), [], r))])
-		             			)
-		             		| (Pat.Tuple ts, f) => ([(List.first (Vector.toList ts), f)], [])
-		             		| (Pat.Var x, f) => ([], [(x, f)])
-		             		| (Pat.Wild, _) =>  ([], [])
-		             		| _ => (print "\nBind pat frame get wrong\n"; assertfalse ())
-		             end
+              (Pat.Tuple ts, Frecord (fs, r)) => 
+              if ((List.length fs) = 0) then (* means unit *)
+                ([], [(Var.mk_ident "", Fconstr(Tycon.defaultInt (), [], empty_refinement))])
+              else if ((List.length fs) > 1 andalso (Vector.length ts) = 1) then (
+                ([(Vector.last ts, frame)], [])
+              )
+              else ( 
+                (List.zip(Vector.toList ts, (List.map(fs, (fn(a, b) => a)))), [(record_var, Fconstr(Tycon.defaultInt (), [], r))])
+              )
+            | (Pat.Tuple ts, f) => ([(List.first (Vector.toList ts), f)], [])
+            | _ => (print "\nFrame : Bind pat frame get wrong\n"; assertfalse ())
+         end
 		    in Common.expand mbind [(pat, frame)] []
 		    end
 		

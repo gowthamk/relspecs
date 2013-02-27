@@ -157,7 +157,7 @@ structure RelFrame : REL_FRAME =
              		| Tuple ts => pprint_pattern_vector ts
              		| Var var => CoreML.Var.toString var
              		| Wild =>  "_"
-             		| _ => assertfalse () 
+             		| _ => fail "unexpected pat\n"
              end
      	
 		and pprint_pattern_vector pats = "("^(Vector.fold (pats, "", (fn (pat, str) => (str ^ (pprint_pattern pat) ^ ", "))))^")" 
@@ -330,7 +330,7 @@ structure RelFrame : REL_FRAME =
           in 
             (field_typ, name) 
           end
-          | _ => assertfalse ()
+          | _ => fail "Tfield expected\n"
         in RFrecord (List.map (fields, fresh_field), freshf()) end
       | _ => (print "@[Warning: Freshing unsupported type]@."; RFunknown)
     in 
@@ -412,15 +412,13 @@ structure RelFrame : REL_FRAME =
                   (List.zip(Vector.toList (Record.range tr), (List.map(fr, fn(a, b) => a))), [])
               | (Pat.Tuple ts, RFrecord (fs, _)) => 
                 if ((List.length fs) = 0) then (* means unit *)
-                  ([], [(Var.mk_ident "", RFconstr(Tycon.defaultInt (), [], empty_refinement))])
-                else if ((List.length fs) > 1 andalso (Vector.length ts) = 1) then (
+                  ([], []) (* Nothing to bind here *)
+                else if ((List.length fs) > 1 andalso (Vector.length ts) = 1) then
                   ([(Vector.last ts, relframe)], [])
-                )
-                else ( 
+                else
                   (List.zip(Vector.toList ts, (List.map(fs, (fn(a, b) => a)))), [])
-                )
               | (Pat.Tuple ts, f) => ([(List.first (Vector.toList ts), f)], [])
-              | _ => (print "\nBind pat relframe get wrong\n"; assertfalse ())
+              | _ => (print "\nRelBind pat relframe get wrong\n"; assertfalse ())
            end
 		    in Common.expand mbind [(pat, relframe)] []
 		    end
@@ -470,6 +468,7 @@ structure RelFrame : REL_FRAME =
       | (RFrecord (f1s, r), RFrecord (f2s, _)) =>
           let fun label_rec ((f1, n), (f2, _)) = (label vars f1 f2, n) 
           in RFrecord (List.map2 (f1s, f2s, label_rec), r) end
+      | _ => fail ("RFrame: Can't label\n"^(pprint f)^"\nlike\n"^(pprint f')^"\n")
     in label [] f f' end
 
   (* Inserting substitutions into refinements *)

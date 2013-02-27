@@ -24,6 +24,7 @@ signature LIGHTENV =
 		val domain : t -> Var.t list
 		
 		val env_bind: t -> CoreML.Pat.t -> Frame.t -> t
+		val new_env_bind: t -> CoreML.Pat.t -> Frame.t -> TyconMap.t -> t
 		val env_bind_record : t -> CoreML.Pat.t -> Frame.t -> Var.t -> t
 		val pprint_fenv: t -> string
 		val pprint_fenv_except: (t*(Var.t -> bool)) -> string
@@ -92,6 +93,8 @@ structure Lightenv : LIGHTENV =
 		fun pprint_fenv_except (fenv,test) = fold (fn k => fn v => fn c => (if (not (test k)) then ("@ " ^ (Frame.unique_name k) ^ " --> " ^ (Frame.pprint v) ^ "\n" ^ c) else c )) fenv ""
 		
 		fun env_bind env pat frame = addn (Frame.bind pat frame) env
+
+		fun new_env_bind env pat frame tm = addn (Frame.new_bind pat frame tm) env
 		
 		fun env_bind_record env pat frame record_var = addn (Frame.bind_record pat frame record_var) env
 	end
