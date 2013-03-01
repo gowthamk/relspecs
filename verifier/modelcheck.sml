@@ -181,7 +181,7 @@ structure Modelcheck =
          fci is id of corresponding frame constraint
        *)
         val rm = 
-          List.fold ((*C.scc_rank flabel deps*)[],SIM.empty,
+          List.fold ((C.scc_rank deps),SIM.empty,
             (* constraint index, rank of its scc *)
             (fn ((id,r),rm) => 
               let 
@@ -214,15 +214,31 @@ structure Modelcheck =
               (SIM.insert (om,i,orig), SIM.insert (cm,i,c))
             end
           ))
+        val _ = print "About to calculate rank map..\n"
         val (dm,rm) = make_rank_map om cm
+        val _ = print "Done calculating rank map\n"
       in
         {orig = om, cnst = cm, rank = rm, depm = dm(*, pend = Hashtbl.create 17*)}
       end
+
+    fun pprint_sri {orig=om, cnst=cm, rank=rm, depm=dm} = 
+      SIM.foldli (fn (id,rc,_) => 
+        let
+          val opt = SIM.find (rm,id) (*rm has no WFR constraints*)
+          val _ = case opt of
+              SOME (r,b,fci) => print ((Int.toString id)^". [rank# "^(Int.toString r)^"]"^
+              " - "^(RCs.pprint_ref rc)^"\n")
+            | NONE => print ((Int.toString id)^".             "^(RCs.pprint_ref rc)^"\n")
+        in
+          ()
+        end
+      ) () cm
 
     fun solve inst_rqs rcs = 
       let
         val rcs = List.map (rcs,RCs.simplify_rfc)
         val sri = make_ref_index (RCs.split rcs) 
+        val _  = pprint_sri sri
       in
         ()
       end

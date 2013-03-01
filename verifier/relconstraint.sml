@@ -92,16 +92,16 @@ struct
   
   fun pprint_io io = 
     case io of
-          SOME id => "(" ^ (Int.toString id) ^ ")"
-        | NONE    => "()"
+          SOME id => Int.toString id
+        | NONE    => ""
   
-  fun pprint_ref so refcons =
+  fun pprint_ref refcons =
     case refcons of 
-          SubRef (rel_env,r1,r2,io) =>
-          "SubRef" ^ (pprint_io io) (* ^ ((pprint_env_pred so) env) ^ (P.pprint (guard_predicate () g))*) ^
-          " r1 is " ^ (RF.pprint_refinement r1) ^ " r2 is " ^ (RF.pprint_refinement r2) ^ "\n"
-        | WFRef (rel_env,r,io) =>
-          "WFRef" ^ (pprint_io io) (*^ ((pprint_env_pred so) env)*) ^ (RF.pprint_refinement r) ^ "\n"
+      SubRef (rel_env,r1,r2,io) =>
+      "[SR #" ^(pprint_io io)^"] "^(* ^ ((pprint_env_pred so) env) ^ (P.pprint (guard_predicate () g))*)
+      (RF.pprint_refinement r1)^" <: "^(RF.pprint_refinement r2)
+    | WFRef (rel_env,r,io) =>
+      "[WFR #"^(pprint_io io)^"] "(*^ ((pprint_env_pred so) env)*)^(RF.pprint_refinement r) 
   
   (* Make labeled constraint 
    * c is a labeled constraint; rfc is a rel frame constraint; 
@@ -234,14 +234,17 @@ struct
    to SubRef and WFRef constraints *)
   fun split rcs =
   let
-    val _ = asserti (List.forall (rcs,(fn (lc c) => case #lc_id c of 
-      SOME _ => true | NONE => false)),
-      "Id missing\n")
-    in
-      C.expand 
+      val _ = asserti (List.forall (rcs,(fn (lc c) => case #lc_id c of 
+        SOME _ => true | NONE => false)),
+        "Id missing\n")
+      val _ = print "In split\n"
+      val a = C.expand 
         (fn (lc c) => case #lc_cstr c of 
           SubRFrame _ => split_sub c 
         | WFRFrame _ => split_wf c)
-        rcs [] 
+        rcs []
+      val _ = print "Out of split\n"
+    in
+       a
     end
 end

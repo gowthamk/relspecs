@@ -354,6 +354,7 @@ structure RelFrame : REL_FRAME =
      *)
     fun fresh_constructor c tyvarfs rexpr tm =
       let
+        val _ = print "fresh cons\n"
         val tyvars = TM.get_tyvars_by_cstr tm c
         val _ = asserti((List.length tyvars = List.length tyvarfs),
           "valcon tyargs not same as tycon tyargs\n")

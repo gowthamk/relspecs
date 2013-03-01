@@ -9,5 +9,5 @@ struct
   open IntBinaryMap
   fun find_crash (m,k) = case find (m,k) of
       SOME p => p
-    | NONE => raise Not_found
+    | NONE => (print ((Int.toString k)^" not found\n");raise Not_found)
 end
