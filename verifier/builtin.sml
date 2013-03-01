@@ -248,10 +248,10 @@ structure Builtin (*: BUILTIN*) =
 		   						(fn z => qbool_rel qname rel (x, y, z))))))
 		
 		val mframes = [
-		  op_frame ["+", "Pervasives"] "+" Plus,
+		  (*op_frame ["+", "Pervasives"] "+" Plus,
 		  op_frame ["-", "Pervasives"] "-" Minus,
 		  op_frame ["/", "Pervasives"] "/" Div,
-		  op_frame ["*", "Pervasives"] "*" Times,
+		  op_frame ["*", "Pervasives"] "*" Times,*)
 		  
 		  (["!_0", "Pervasives"],
 		  defun (forall (fn a =>
@@ -361,9 +361,9 @@ structure Builtin (*: BUILTIN*) =
 		  poly_rel_frame ["<", "Pervasives"] "<" Lt,
 		  poly_rel_frame [">", "Pervasives"] ">" Gt,
 		  poly_rel_frame [">=", "Pervasives"] ">=" Ge,
-		  poly_rel_frame ["<=", "Pervasives"] "<=" Le,
+		  poly_rel_frame ["<=", "Pervasives"] "<=" Le
 		
-		  (["length_0", "Array"],
+		  (*(["length_0", "Array"],
 		   defun (forall (fn a =>
 		          fn x => doublerow (mk_array a [])
 		          (fn y => mk_int [qsize_arr Eq x y y, qint Ge 0 y])))),
@@ -494,7 +494,7 @@ structure Builtin (*: BUILTIN*) =
 		  defun (forall (fn a => 
 		  		fn x => doublerow a 
 		  		(fn y => uUnit
-		  ))))
+		  ))))*)
 		  
 		  (*
 		  (["int", "Random"], defun (fun x -> rInt "PosMax" x (PInt 0 <. PVar x) ==>

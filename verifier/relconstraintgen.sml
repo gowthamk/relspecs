@@ -90,48 +90,44 @@ struct
         ))
     end
 
-  fun expression_to_rexpr e =
-    let 
-    in
-      case (Exp.node e) of
-          Exp.Const f => (case (constexp_to_int e) of
-              SOME i => RP.make_rset [RP.RInt i]
-            (* This is irrelevant as we will eventually have RTrue as pat refinement *)
-            | NONE => RP.make_dummy_rexpr() 
-          )
-        | Exp.Var (varf, _) => RP.make_rrel(defaultCons,RP.make_typedvar(varf()))
-        | Exp.App (e1, e2) => (case ((type_desc e),(Exp.node e1)) of
-              (Tconstr (tycon,tdlist), Exp.Con (c,_)) =>
-                (let
-                  val (flags:(bool list)) = List.map ((TM.get_argtys_by_cstr tycon_map c), (fn(x,y)=>y)) 
-                  val conargs = filter_conargs e2
-                  val _ = if (not (List.length flags = List.length conargs))then
-                      (print ("Constructor application pattern mismatch\n");assertfalse())
-                    else ()
-                  fun separate (e,flag,(l1,l2)) = (case (Exp.node e) of
-                      Exp.Var (v,_) => 
-                      let 
-                        val typedvar = RP.make_typedvar (v())
-                      in 
-                        if flag then (l1,(RP.RRel(c,typedvar))::l2) else ((RP.RVar typedvar)::l1,l2)
-                      end
-                    | Exp.Const f => (case (constexp_to_int e) of
-                          SOME i => ((RP.RInt i)::l1,l2)
-                        | NONE => (print ("Constructor args error\n");assertfalse())
-                      )
-                    | _ => fail "Constructor args should contain only atoms\n"
-
+  fun expression_to_rexpr e = case (Exp.node e) of
+      Exp.Const f => (case (constexp_to_int e) of
+          SOME i => RP.make_rset [RP.RInt i]
+        (* This is irrelevant as we will eventually have RTrue as pat refinement *)
+        | NONE => RP.make_dummy_rexpr() 
+      )
+    | Exp.Var (varf, _) => RP.make_rrel(defaultCons,RP.make_typedvar(varf()))
+    | Exp.App (e1, e2) => (case ((type_desc e),(Exp.node e1)) of
+          (Tconstr (tycon,tdlist), Exp.Con (c,_)) =>
+            (let
+              val (flags:(bool list)) = List.map ((TM.get_argtys_by_cstr tycon_map c), (fn(x,y)=>y)) 
+              val conargs = filter_conargs e2
+              val _ = if (not (List.length flags = List.length conargs))then
+                  (print ("Constructor application pattern mismatch\n");assertfalse())
+                else ()
+              fun separate (e,flag,(l1,l2)) = (case (Exp.node e) of
+                  Exp.Var (v,_) => 
+                  let 
+                    val typedvar = RP.make_typedvar (v())
+                  in 
+                    if flag then (l1,(RP.RRel(c,typedvar))::l2) else ((RP.RVar typedvar)::l1,l2)
+                  end
+                | Exp.Const f => (case (constexp_to_int e) of
+                      SOME i => ((RP.RInt i)::l1,l2)
+                    | NONE => (print ("Constructor args error\n");assertfalse())
                   )
-                  val _ = assertl (conargs,flags,"assertl - conargs,flags\n")
-                  val (l1,l2) = List.fold2(conargs,flags,([],[]),separate)
-                  val set = RP.make_runion ((RP.make_rset l1)::l2)
-                in
-                  set
-                end)
-            | _ => RP.make_dummy_rexpr()
-          )
-        | _ =>  RP.make_dummy_rexpr()
-    end
+                | _ => fail "Constructor args should contain only atoms\n"
+
+              )
+              val _ = assertl (conargs,flags,"assertl - conargs,flags\n")
+              val (l1,l2) = List.fold2(conargs,flags,([],[]),separate)
+              val set = RP.make_runion ((RP.make_rset l1)::l2)
+            in
+              set
+            end)
+        | _ => RP.make_dummy_rexpr()
+      )
+    | _ =>  RP.make_dummy_rexpr()
   
   (* constant to PInt; variable to PVar *)
   fun expression_to_pexpr e =
@@ -392,8 +388,9 @@ struct
               end
         end
       (*end of constrain_rec*)
+      val (fenv,renv,cstrs,rstrs) =constrain_rec initfenv initrenv guard [] [] pdecs  
     in 
-      constrain_rec initfenv initrenv guard [] [] pdecs 
+      (fenv,renv,cstrs,rstrs,tycon_map)
     end
       
   and constrain_bindings env renv guard recflag bindings polymatching_table =
@@ -1092,7 +1089,7 @@ struct
   and constrain_let (env, guard, f) (renv,_,rf) decs body 
                     polymatching_table =
       let 
-        val (env',renv',cstrs1,rstrs1) = 
+        val (env',renv',cstrs1,rstrs1,_) = 
           constrain_structure env renv guard decs polymatching_table 
         val (body_frame, body_rframe, cstrs2, rstrs2) =
           constrainExp body env' renv' guard polymatching_table
@@ -1235,36 +1232,4 @@ struct
         | [] => ()
   
   (* fun lbl_dummy_cstr c = lc { lc_cstr = c, lc_orig = Loc NONE, lc_id = fresh_fc_id () } *)
-  
-  (* Inferred frame should be a subtype of the frame given by users or third party tools *)
-  fun mfm fenv p f = 
-    if Le.mem p fenv
-    then
-      let val f' = Le.find p fenv 
-      in SOME (Cs.SubFrame (fenv, [], f', F.label_like f f')) end
-    else NONE 
-    
-  (*fun display_frame s name fr = "Pat: " ^ (Var.toString name) ^ " Type: " ^ (Constraint.pprint_with_solution fr s)
-  
-  fun display_result fenv str s = 
-    let fun display fenv r str s = 
-      case str of 
-            [] => r
-          | (Dec.Datatype v) :: pdecs' => display fenv r pdecs' s						     
-        | (Dec.Exception ca) :: pdecs' => display fenv r pdecs' s
-        | (Dec.Fun {decs, tyvars, ...}) :: pdecs' => 
-              let val	names = Vector.toListMap (decs, (fn {lambda=lm, var=var'} => var'))
-                in
-                  let val r' = List.fold (names, r, fn (name, r) => (r ^ (display_frame s name (Lightenv.find name fenv)) ^ "\n"))
-                in (display fenv r' pdecs' s) end
-                end					        	
-            | (Dec.Val {rvbs, tyvars, vbs, ...}) :: pdecs' =>
-                let val	names = Vector.toListMap (rvbs, (fn {lambda=lm, var=var'} => var'))
-                          @
-                          Common.flatten (Vector.toListMap (vbs, (fn {exp=exp', pat=pat', ...} => Pattern.vars pat')))
-          in
-            let val r' = List.fold (names, r, fn (name, r) => (r ^ (display_frame s name (Lightenv.find name fenv)) ^ "\n"))
-                in (display fenv r' pdecs' s) end
-              end
-      in display fenv "" str s end*)
 end

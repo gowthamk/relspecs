@@ -36,6 +36,7 @@ signature REL_BUILTIN =
 		
 		val frames : unit -> (Var.t * RelFrame.t) list
     
+    val qualifiers : unit -> RelQualifier.t list
 		(*val and_frame : Predicate.t -> Predicate.t -> RelFrame.t 
 		
 		val or_frame : Predicate.t -> Predicate.t -> RelFrame.t*)
@@ -268,6 +269,18 @@ structure RelBuiltin (*: BUILTIN*) =
 			end
 
 		fun equality_refinement con rexp = ([], RQconst [RQ.equality_qualifier con rexp])
+
+    fun qualifiers () = 
+    let
+      val varf = fn _ => RP.make_typedvar (Var.fromString "x")
+      val defCons = Con.fromString "any"
+      val rel = (RP.make_rrel(defCons,varf()))
+      val set = (RP.make_rset [RP.RVar (varf())])
+      val union = RP.make_runion [set,rel]
+      val eq = RQ.equality_qualifier defCons
+    in
+      [eq rel, eq set, eq union]
+    end
 		(*
     fun field_eq_qualifier name c rexp =
 			let 

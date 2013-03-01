@@ -11,6 +11,7 @@ signature PATTERN =
     val bind_relem : CoreML.Pat.t -> RelPredicate.relem list -> (Var.t*RelPredicate.relem) list
 		val same : (CoreML.Pat.t * CoreML.Pat.t) -> bool
 		val vars : CoreML.Pat.t -> Var.t list
+    val is_simple : CoreML.Pat.t -> bool
 	end
 	
 structure Pattern : PATTERN = 
@@ -60,6 +61,25 @@ structure Pattern : PATTERN =
 				  case l of [] => []
 				| h::t => (f i h)::(mm (i+1) t) 
 			in mm 0 xs end
+
+    fun is_simple pat = 
+    let
+      fun is_atom pat = case CoreML.Pat.node pat of
+          CoreML.Pat.Wild => true
+        | CoreML.Pat.Var x => true
+        | CoreML.Pat.Const _ => true
+        | _ => false
+      fun is_atom_tuple pat = case CoreML.Pat.node pat of
+          CoreML.Pat.Tuple pats => List.forall 
+          ((Vector.toList pats),is_atom)
+        | CoreML.Pat.Record pats => List.forall
+          ((Vector.toList (Record.toVector pats)),(fn (_,x) => is_atom x))
+        | _ => false
+    in
+      (is_atom pat) orelse (is_atom_tuple pat)
+    end
+    
+
 		
 		fun bind_pexpr pat pexp =
 			let fun bind_rec ((pat, pexp), subs) = (
@@ -152,7 +172,7 @@ structure Pattern : PATTERN =
       in
         case pat_rexpr of
           SOME r => RP.requals r rexpr
-        | NONE => RP.RTrue
+        | NONE => RP.RTrue (* we only record constructor relations *)
       end
 
 		fun same (p1, p2) =

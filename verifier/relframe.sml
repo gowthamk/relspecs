@@ -50,8 +50,8 @@ signature REL_FRAME =
 		(*val refinement_conjuncts:
 		  (Var.t -> Qualifier.t list) -> Predicate.pexpr -> refinement -> Predicate.t list
 		val refinement_predicate:
-		   (Var.t -> Qualifier.t list) -> Predicate.pexpr -> refinement -> Predicate.t*)
-		val refinement_vars: t -> Var.t list*)
+		   (Var.t -> Qualifier.t list) -> Predicate.pexpr -> refinement -> Predicate.t*)*)
+		val refinement_vars: t -> Var.t list
 		val apply_refinement: refinement -> t -> t
 		(*val predicate:
 		  (Var.t -> Qualifier.t list) -> Predicate.pexpr -> t -> Predicate.t
@@ -479,4 +479,17 @@ structure RelFrame : REL_FRAME =
     | f => f
   (*  Inserting susbstitutions into frames *)
   fun apply_substitution sub f = map (apply_substitution_map sub) f
-	end
+
+  fun ref_var refinement = case refinement of 
+      (_, RQvar (k, _)) => SOME k
+    | _ => NONE
+
+		(* Extracting refinement vars *)
+  fun refinement_vars fr = case fr of
+      RFconstr (_, _, r) => maybe_cons (ref_var r) []
+    | RFrecord (fs, r) => maybe_cons (ref_var r) (List.fold (fs, [], 
+        (fn ((f, _), r) => refinement_vars f @ r)))
+    | RFvar (_, r) => maybe_cons (ref_var r) []
+    | _ => []
+		  		
+end

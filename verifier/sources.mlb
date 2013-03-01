@@ -32,6 +32,8 @@ local
   relconstraint.sml
 	constraintgen.sml
   relconstraintgen.sml
+  varmap.sml
+  intmap.sml
 	ann "allowFFI true" in	
 		testrun.sml
 	end 
@@ -52,6 +54,9 @@ in
 	structure Builtin
 	signature REL_BUILTIN
 	structure RelBuiltin
+  structure VarMap
+  signature INT_MAP
+  structure IntMap
 	(*signature CONSTRAINTGEN*)
 	structure Modelcheck
 end

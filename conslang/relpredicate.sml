@@ -94,6 +94,8 @@ signature REL_PREDICATE =
   val make_dummy_rexpr : unit -> rexpr
 		
   val make_null_rset : unit -> rexpr
+
+  (*val instantiate_restricted_rexpr : (Con.t * Var.t list * Var.t list) -> rexpr -> rexpr *)
 end
 	
 structure RelPredicate :REL_PREDICATE =
