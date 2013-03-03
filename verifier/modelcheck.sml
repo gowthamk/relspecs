@@ -21,11 +21,19 @@ struct
   structure Sol = VarTable
   structure TM = TyconMap
 
-  type binding_id = int
+  structure WH = Functional(
+    struct 
+        type t = RCs.subref_id * (int * bool * RCs.fc_id) 
+        fun compare (_, (i, id)) (_, (i', id')) = 
+          if i <> i' then
+            if i < i' then 1 else ~1
+          else 
+            case (Int.compare(id, id')) of
+                EQUAL => 0
+              | LESS => 1
+              | GREAT => ~1
+    end)
 
-  (*type binding_cnst = VerificationCondition.binding_cnst*)
-
-  (* Modular top level bindings of sml program *)
     
   open RelConstraint
 
@@ -266,6 +274,33 @@ struct
   fun pprint_sol s = Sol.foldi 
     (fn (v,inst_qs,str) => str^(Var.toString v)^" -> "^
       "["^(String.concatWith ((List.map(inst_qs,RQ.pprint)),",\n"^spc))^"]\n") "" s
+
+   fun push_worklist sri w cs = List.foldl(cs,w,
+      (fn(c,w)=>
+      let
+        val id = get_ref_id c
+        val 
+      in
+      end
+      ))
+      (fun w c -> 
+        let id = get_ref_id c in
+        let _ = C.cprintf C.ol_solve "@[Pushing@ %d@\n@]" id in 
+        if Hashtbl.mem sri.pend id then w else 
+          let _ = Hashtbl.replace sri.pend id () in
+          WH.add (id,get_ref_rank sri c) w)
+      w cs 
+
+  fun get_ref_constraints {cnst=ics, ...} = SIM.listitems ics
+
+  fun is_subref_constraint c = case c of SubRef _ => true | _ => false
+
+  fun make_initial_worklist sri =
+    let 
+      val cs = #yes (List.partition((get_ref_constraints sri),is_subref_constraint)) 
+    in
+      push_worklist sri WH.empty cs
+    end
 
   fun solve uninst_rqs rcs tm = 
     let
