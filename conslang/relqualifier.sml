@@ -14,9 +14,9 @@ signature REL_QUALIFIER (*: ORD_KEY*) =
 		(* give unique representation to variables in the predicate *)
 		val instantiate: (string * Var.t) list -> t -> t option
 		
-		(*val pprint: t -> string
+		val pprint: t -> string
 		
-		val transl_pattern_qual : PATQualifier.t -> t list
+		(*val transl_pattern_qual : PATQualifier.t -> t list
 		
 		val logic_equals : t -> t -> bool
 		
@@ -49,6 +49,9 @@ structure RelQualifier : REL_QUALIFIER =
 				val rpred = RP.rsub (RP.make_rrel (con,tyv)) exp
 		   		val expstr = RP.pprint rpred 
 		   	in (Var.mk_ident expstr, tyv, rpred) end
+
+    fun pprint (v,bv,pred) = "Q("^(Var.toString bv)^")"^
+      " :: "^(RP.pprint pred)
 
 
 		(*type ord_key = t

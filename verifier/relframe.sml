@@ -29,12 +29,13 @@ signature REL_FRAME =
 		(*val pprint_final : t -> (Var.t -> Qualifier.t list) -> string
 		val pprint_sub: substitution -> string *)
 		val pprint_refinement: refinement -> string
-		(*val same_shape: bool -> (t * t) -> bool*)
+		val same_shape: (t * t) -> bool
 		val fresh_true : unit -> refinement
     (* fresh gives a new frame for given type. It takes Type Constructor to value constructor mapping. *)
 		val fresh: CoreML.Type_desc.type_desc -> TyconMap.t -> t
 		val fresh_without_vars: CoreML.Type_desc.type_desc -> TyconMap.t -> t
 		val fresh_unconstrained: CoreML.Type_desc.type_desc -> TyconMap.t -> t
+    val fresh_with_var_fun : ((Tyvar.t*t) list) ref -> Type_desc.type_desc -> (unit -> refinement) -> TyconMap.t -> t
     val fresh_refinement : RelQualifier.t -> refinement
 		val fresh_constructor: Con.t -> t list -> RelPredicate.rexpr -> TyconMap.t -> t list
 		val instantiate: t -> t -> t
@@ -346,7 +347,7 @@ structure RelFrame : REL_FRAME =
 
 		fun fresh_without_vars ty tm =
 			fresh_with_var_fun (ref []) ty (fn _ => empty_refinement) tm (* empty qconst *)
-		
+
     (* creates fresh frames for constructor arguments in pattern
      * having the knowledge of frames of tyargs of current type constructor.
      * i.e., if type is 'a list, and pat is h::t, it creates frames for h and
@@ -492,5 +493,22 @@ structure RelFrame : REL_FRAME =
         (fn ((f, _), r) => refinement_vars f @ r)))
     | RFvar (_, r) => maybe_cons (ref_var r) []
     | _ => []
-		  		
+
+  fun same_shape (rf,rf') = case (rf,rf') of
+      (RFconstr(p, l, _), RFconstr(p', l', _)) => if (List.length l = List.length l') then
+        (Tycon.equals (p, p')) andalso (List.forall2 (l, l', same_shape))
+        else false
+    | (RFvar (p, _), RFvar (p', _)) =>Var.logic_equals (p, p')
+    | (RFarrow(_, i, o'), RFarrow(_, i', o'')) =>
+      (same_shape (i, i')) andalso (same_shape (o', o''))
+    | (RFrecord (f1s, _), RFrecord (f2s, _)) =>
+        if (List.length f1s = List.length f2s) then
+          let fun shape_rec ((f1, _), (f2, _)) = same_shape (f1, f2) 
+          in
+            List.forall2 (f1s, f2s, shape_rec)
+          end
+        else false
+    | (RFunknown, RFunknown) => true
+    | _ => false
+    
 end

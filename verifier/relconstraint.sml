@@ -95,13 +95,21 @@ struct
           SOME id => Int.toString id
         | NONE    => ""
   
-  fun pprint_ref refcons =
-    case refcons of 
-      SubRef (rel_env,r1,r2,io) =>
-      "[SR #" ^(pprint_io io)^"] "^(* ^ ((pprint_env_pred so) env) ^ (P.pprint (guard_predicate () g))*)
-      (RF.pprint_refinement r1)^" <: "^(RF.pprint_refinement r2)
-    | WFRef (rel_env,r,io) =>
-      "[WFR #"^(pprint_io io)^"] "(*^ ((pprint_env_pred so) env)*)^(RF.pprint_refinement r) 
+  fun pprint_ref refcons flag =
+    let
+      val spc = "                          "
+      fun maybe_pprint_env (env,renv,g) = if flag
+        then ("[\n"^(Le.pprint_fenv_except (env,B.is_builtin))^spc^"]\n"^spc^"[\n"^(RLe.pprint_renv renv)^
+          spc^"]\n"^spc^"[\n"^(Le.pprint_guard g)^"] |- ")
+        else ""
+    in
+      case refcons of 
+        SubRef (rel_env,r1,r2,io) =>
+        "[SR #" ^(pprint_io io)^"]-"^(maybe_pprint_env rel_env)^
+        (RF.pprint_refinement r1)^" <: "^(RF.pprint_refinement r2)
+      | WFRef (rel_env,r,io) =>
+        "[WFR #"^(pprint_io io)^"]-"^(maybe_pprint_env rel_env)^(RF.pprint_refinement r) 
+    end
   
   (* Make labeled constraint 
    * c is a labeled constraint; rfc is a rel frame constraint; 
@@ -135,7 +143,7 @@ struct
 
   val qual_test_var = Var.mk_ident "AA"
 
-  val defaultCons = Con.fromString "any"
+  val defaultCons = Con.defaultCons
 
   val qual_test_expr = RP.make_rrel(defaultCons, 
     RP.make_typedvar(qual_test_var))

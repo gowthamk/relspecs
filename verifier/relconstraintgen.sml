@@ -527,7 +527,6 @@ struct
       val renv = rbind renv pat rf rexpr
     in 
       (env, renv, cstrs @ cstrs', rstrs @ rstrs')
-      (*(env,renv,cstrs,rstrs)*)
     end
   
   and bind_all bindings fs env = List.foldr2 (bindings, fs, env, (fn ((p, e, px), f, env) => tbind env p f px))
@@ -732,6 +731,8 @@ struct
           val rstrs = RCs.WFRFrame (rel_env,rf)::
             RCs.WFRFrame (rel_env,rf')::
             RCs.SubRFrame(rel_env,rf',rf)::
+            (List.map (argsupfs,
+            (fn(rsup)=>RCs.WFRFrame(rel_env,rsup))))@
             (List.map2 (argsubfs,argsupfs,
             (fn (rsub,rsup) => RCs.SubRFrame(rel_env,rsub,rsup))))
           val cstrs = Cs.WFFrame(env, f) :: 

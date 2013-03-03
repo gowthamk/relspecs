@@ -13,6 +13,7 @@ sig
   val get_tyvars_by_cstr : t -> Con.t -> Tyvar.t list
   val get_argtys_by_cstr : t -> Con.t -> (Type_desc.type_desc*bool) list
   val get_tycon_def : t -> Tycon.t -> (Con.t * Type_desc.type_desc list) list
+  val get_cstrs_by_tycon : t -> Tycon.t -> Con.t list
 end
 structure TyconMap : TYCON_MAP =
 struct
@@ -97,4 +98,6 @@ struct
     end
 
   fun get_tycon_def (sdt,dt) tyc = HashTable.lookup sdt tyc
+
+  fun get_cstrs_by_tycon tm tycon = List.map(get_tycon_def tm tycon,fst)
 end

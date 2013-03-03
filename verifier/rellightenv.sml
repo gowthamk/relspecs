@@ -29,8 +29,9 @@ signature REL_LIGHTENV =
 		
 		val env_bind: t -> CoreML.Pat.t -> RelFrame.t -> RelPredicate.rexpr -> TyconMap.t -> t
 		(*val env_bind_record : t -> CoreML.Pat.t -> RelFrame.t -> Var.t -> t*)
-		val pprint_fenv: t -> string
-		val pprint_fenv_except: (t*(Var.t -> bool)) -> string
+		val pprint_renv: t -> string
+		val pprint_renv_except: (t*(Var.t -> bool)) -> string
+    val get_vars_with_same_shape : t -> RelFrame.t -> Var.t list
 	end
 
 
@@ -91,9 +92,12 @@ struct
   fun domain env = maplist (fn k => fn _ => k) env
   
 
-  fun pprint_fenv fenv = fold (fn k => fn v => fn c => ("@ " ^ (RelFrame.unique_name k) ^ " --> " ^ (RelFrame.pprint v) ^ "\n" ^ c)) fenv ""
+  val spc = "                           "
 
-  fun pprint_fenv_except (fenv,test) = fold (fn k => fn v => fn c => (if (not (test k)) then ("@ " ^ (RelFrame.unique_name k) ^ " --> " ^ (RelFrame.pprint v) ^ "\n" ^ c) else c )) fenv ""
+  fun pprint_renv fenv = fold (fn k => fn v => fn c => (c^spc^ (RelFrame.unique_name k)^ 
+    "="^(RelFrame.pprint v)^"\n")) fenv ""
+
+  fun pprint_renv_except (fenv,test) = fold (fn k => fn v => fn c => (if (not (test k)) then ("@ " ^ (RelFrame.unique_name k) ^ " --> " ^ (RelFrame.pprint v) ^ "\n" ^ c) else c )) fenv ""
   
   fun env_bind env pat frame rexpr tm = 
     let
@@ -103,4 +107,7 @@ struct
     end 
 		
 		(*fun env_bind_record env pat frame record_var = addn (RelFrame.bind_record pat frame record_var) env*)
+
+  fun get_vars_with_same_shape renv rf = 
+    foldi (fn (v,rf',acc) => if(RelFrame.same_shape(rf,rf'))then v::acc else acc) [] renv
 end

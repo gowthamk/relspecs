@@ -273,7 +273,7 @@ structure RelBuiltin (*: BUILTIN*) =
     fun qualifiers () = 
     let
       val varf = fn _ => RP.make_typedvar (Var.fromString "x")
-      val defCons = Con.fromString "any"
+      val defCons = Con.defaultCons
       val rel = (RP.make_rrel(defCons,varf()))
       val set = (RP.make_rset [RP.RVar (varf())])
       val union = RP.make_runion [set,rel]

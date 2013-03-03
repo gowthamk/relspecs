@@ -28,6 +28,7 @@ signature LIGHTENV =
 		val env_bind_record : t -> CoreML.Pat.t -> Frame.t -> Var.t -> t
 		val pprint_fenv: t -> string
 		val pprint_fenv_except: (t*(Var.t -> bool)) -> string
+    val pprint_guard : (Var.t * int * bool) list -> string
 	end
 
 
@@ -87,10 +88,16 @@ structure Lightenv : LIGHTENV =
 		
 		fun domain env = maplist (fn k => fn _ => k) env
 		
+    val spc = "                           "
 
-		fun pprint_fenv fenv = fold (fn k => fn v => fn c => ("@ " ^ (Frame.unique_name k) ^ " --> " ^ (Frame.pprint v) ^ "\n" ^ c)) fenv ""
+		fun pprint_fenv fenv = fold (fn k => fn v => fn c => (c^spc^(Frame.unique_name k)^"="^(Frame.pprint v)^"\n")) fenv ""
 
-		fun pprint_fenv_except (fenv,test) = fold (fn k => fn v => fn c => (if (not (test k)) then ("@ " ^ (Frame.unique_name k) ^ " --> " ^ (Frame.pprint v) ^ "\n" ^ c) else c )) fenv ""
+		fun pprint_fenv_except (fenv,test) = fold (fn k => fn v => fn c => (if (not (test k))
+      then (c^spc^(Frame.unique_name k)^"="^(Frame.pprint v)^"\n")
+      else c )) fenv ""
+
+    fun pprint_guard guard = List.fold(guard,"",
+      (fn ((gv,i,b),s) => s^spc^(Var.toString gv)^"=("^(Int.toString i)^","^(Bool.toString b)^")"))
 		
 		fun env_bind env pat frame = addn (Frame.bind pat frame) env
 

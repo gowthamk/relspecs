@@ -95,7 +95,7 @@ signature REL_PREDICATE =
 		
   val make_null_rset : unit -> rexpr
 
-  (*val instantiate_restricted_rexpr : (Con.t * Var.t list * Var.t list) -> rexpr -> rexpr *)
+  val instantiate_restricted_rexpr : (Con.t * Var.t list * Var.t list) -> rexpr -> rexpr list
 end
 	
 structure RelPredicate :REL_PREDICATE =
@@ -258,4 +258,28 @@ struct
     | RAnd (t1,t2) => "("^(pprint t1)^") && ("^(pprint t2)^")"
     | ROr (t1,t2) => "("^(pprint t1)^") || ("^(pprint t2)^")"
     | RPred pred => pprint_pred pred
+
+  fun instantiate_restricted_rexpr (c,set_sl,rec_sl) (re) : rexpr list = case re of
+      RRel (_,_) => List.map (rec_sl,
+        (fn(v) => RRel(c,make_typedvar v)))
+    | RSet l => if (List.length set_sl < List.length l) then [RSet []] else
+      let
+        (*val pairs = amb set_sl (List.length l)*)
+        val _ = asserti (List.length l = 1,"amb not yet impl\n")
+      in
+        (*List.map(pairs,(fn(p)=>RSet (List.map(p,(fn(v)=>RVar (make_typedvar v))))))*)
+        (RSet [])::(List.map(set_sl,(fn(v)=>RSet [RVar v])))
+      end
+    | RUnion [(RSet l),(RRel(c',v'))] => 
+      let
+        val set_rexps = #yes (List.partition((instantiate_restricted_rexpr 
+          (c,set_sl,[]) (RSet l)),
+          (fn(RSet l)=>case l of [] => false|_ => true)))
+        val rel_rexps = instantiate_restricted_rexpr
+          (c,[],rec_sl) (RRel(c',v'))
+      in
+        List.map(List.cross ([set_rexps,rel_rexps]),
+          (fn l => RUnion l))
+      end
+    | _ => fail ("Not handling pattern "^(pprint_rexpr re)^" yet\n")
 end
