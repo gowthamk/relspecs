@@ -204,6 +204,8 @@ struct
     | SubRef (_,_,_,SOME i) => i
     | _ => assertfalse ()
 
+  fun get_ref_rank sri c = SIM.find_crash (#rank sri,get_ref_id c) 
+
   fun make_ref_index ocs =
     let
       (* freshly number all refinement constraints *)
@@ -275,21 +277,15 @@ struct
     (fn (v,inst_qs,str) => str^(Var.toString v)^" -> "^
       "["^(String.concatWith ((List.map(inst_qs,RQ.pprint)),",\n"^spc))^"]\n") "" s
 
-   fun push_worklist sri w cs = List.foldl(cs,w,
-      (fn(c,w)=>
+  fun push_worklist sri w cs = List.foldl(cs,w,
+    (fn(c,w)=>
       let
         val id = get_ref_id c
-        val 
       in
-      end
-      ))
-      (fun w c -> 
-        let id = get_ref_id c in
-        let _ = C.cprintf C.ol_solve "@[Pushing@ %d@\n@]" id in 
         if Hashtbl.mem sri.pend id then w else 
-          let _ = Hashtbl.replace sri.pend id () in
-          WH.add (id,get_ref_rank sri c) w)
-      w cs 
+          let val _ = Hashtbl.replace sri.pend id () in
+          WH.add (id,get_ref_rank sri c) w end
+      end))
 
   fun get_ref_constraints {cnst=ics, ...} = SIM.listitems ics
 
@@ -302,6 +298,47 @@ struct
       push_worklist sri WH.empty cs
     end
 
+  fun solution_map s k = case Sol.find (s,k) of
+      SOME p => p
+    | NONE => fail ("Refvar "^(Var.toString k)^" has no soln\n")
+
+  fun refine sri s c =
+    let
+      val sm = solution_map s
+    in
+      case c of
+        SubRef (_, _, ([], RF.RQvar (k1, _)), ([], RF.RQvar (k2, _)), _) =>
+         (refine_simple s k1) k2
+      | SubRef (rel_env,r1,(sub2s, RF.RQvar (k2, _)), _)  =>
+        let
+          val qp2s = List.map ((sm k2),
+              (fn q => (q,RF.refement_predicate 
+                sm qual_test_expr (sub2s,RF.RQconst[q]))))
+          val (qp2s1,qp2s') = (List.partition 
+            (qp2s, implies_match rel_env sm r1))
+          val tpc = (implies_tp rel_env sm) r1 
+          val (qp2s2,_)    = List.partition (qp2s',tpc) 
+          val _ = TP.finish () 
+          val q2s'' = List.map (qp2s1 @ qp2s2,fst)
+          val _ = Sol.replace s k2 q2s'' 
+        in
+          (List.length qp2s  <> List.length q2s'')
+        end
+      | _ => false
+    end
+
+  fun solve_sub sri s w = case pop_worklist sri w of
+    (None,_) => s 
+  | (Some c, w') =>
+    let 
+      val (r,b,fci) = get_ref_rank sri c 
+      val w' = if (refine sri s) c 
+        then push_worklist sri w' (get_ref_deps sri c) 
+        else w' 
+    in
+      solve_sub sri s w'
+    end
+
   fun solve uninst_rqs rcs tm = 
     let
       val rcs = List.map (rcs,RCs.simplify_rfc)
@@ -309,6 +346,9 @@ struct
       val _  = pprint_sri sri
       val s = make_initial_solution sri uninst_rqs tm
       val _ = print ("** SOL **\n"^(pprint_sol s)^"\n")
+      val w = make_initial_worklist sri
+      val _ = print "solving subrefs\n"
+      val _ = solve_sub sri s w
     in
       ()
     end

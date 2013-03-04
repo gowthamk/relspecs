@@ -51,7 +51,7 @@ signature REL_FRAME =
 		(*val refinement_conjuncts:
 		  (Var.t -> Qualifier.t list) -> Predicate.pexpr -> refinement -> Predicate.t list
 		val refinement_predicate:
-		   (Var.t -> Qualifier.t list) -> Predicate.pexpr -> refinement -> Predicate.t*)*)
+		   (Var.t -> RelQualifier.t list) -> RelPredicate.rexpr -> refinement -> RelPredicate.t
 		val refinement_vars: t -> Var.t list
 		val apply_refinement: refinement -> t -> t
 		(*val predicate:
@@ -510,5 +510,18 @@ structure RelFrame : REL_FRAME =
         else false
     | (RFunknown, RFunknown) => true
     | _ => false
+
+  (* Candidate qualifier along with subs for current env *)
+  fun refinement_conjuncts sm qual_expr (subs, qualifiers) =
+    let 
+      val quals = case qualifiers of 
+          RQvar (k, _) -> sm k
+        | RQconst qs -> qs
+      val unsubst = List.map (quals, RQ.apply qual_expr)
+    in
+      List.map (unsubst, RP.apply_substs subs)
+    end
     
+  fun refinement_predicate sm qual_var refn =
+    RelPredicate.big_and (refinement_conjuncts sm qual_var refn)
 end
