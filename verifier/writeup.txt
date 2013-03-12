@@ -1,0 +1,289 @@
+fold (l,base,f) = case l of
+    [] => base
+  | x::xs => 
+    let
+      val l' = fold(xs,base,f)
+      val acc' = f(x,l')
+    in
+      acc'
+    end
+
+fold -> {v : int list | g[f](R(Cons,l))}
+
+List.fold(l,[],
+  fn(x,acc)=>if(lookup x acc) 
+    then acc 
+    else insert(x,acc))
+
+c: int list -> 'a
+f: int * int list * (int list -> 'a) -> 'a
+
+fold(l,base,f,c) = case l of [] => c(base)
+  | x::xs => (fold(xs,base,f,(fn(acc)=>f(x,acc,c))))
+
+fold_fun (x,acc,c) = lookup x acc 
+  (fn(flag)=>if flag then c(acc) else insert (x,acc,c))
+
+(*reasoning - hey, so you said that if I have an acc satisfying property P, then I
+can give you that acc to unblock you, right? Well, I can give you such acc. Here
+is the fn. Call it with your current x. And to get real acc, here is the
+thunk.*)
+
+fun lookup x2 l c = case l of [] => c(false)
+  | x::xs => if(x=x2) then c(true) else lookup x2 xs c
+
+fun insert a l c = case l of [] => c([a])
+  | x::xs => if(x<=a) then c(a::l) else insert a xs (fn(acc)=>c(x::acc))
+
+fun concat l1 l2 = case l1 of [] => l2 
+  | x::xs => x::(concat xs l2)
+
+fun range_query k1 k2 t = case t of E => []
+  | N (lt,n,rt) => if(n<k1) then range_query k1 k2 rt
+      else if (n>k2) then range_query k1 k2 lt
+      else (range_query k1 n lt)@[n]@(range_query n k2 rt)
+
+(********************************************************************)
+(************** types of fold functions *****************************)
+(********************************************************************)
+f(x,acc) = x::acc --> {x} U R(xs)
+f(x,acc) = g(x)::acc --> {g[fn(x,acc)=>g(x)::acc](R(l))}
+f(x,acc) = x+acc --> {v = g[op +](R(l))}
+f(x,acc) = g(x,acc) -> {v = g[g](R(l))}
+f(x,acc) = if(x<acc) then x else acc --> {v in R(l) andalso Sig[n<v](R(l))={}}
+f(x,acc) = if (x=k) then true else false --> {v=true <=> k in R(l)}
+f(x,acc) = if (x>10) then x::acc else acc --> {R(v) = Sig[n>10](R(l))}
+f(x,acc) = if (p(x)) then x::acc else acc --> {R(v) = Sig[p(n)](R(l))}
+f(x,acc) = if (p(x)) then g(x,acc) else acc --> {v = g[g](Sig[p(n)](R(l)))}
+f(x,acc) = if (p(x)) then g(x)::acc else acc --> {v = g[fn(x,acc)=>g(x)::acc](Sig[p(n)](R(l)))}
+
+Consider the concat function - 
+
+concat : {l1: 'a list} -> {l2 : 'a list} -> {l3 : 'a list | R(Cons,l3) =
+R(Cons,l1) U R(Cons,l2)}
+fun concat l1 l2 = case l1 of [] => l2 
+  | x::xs => x::(concat xs l2)
+
+The implications that need to be satisfied for the type to hold are -
+1. R(Cons,l1) = {} |- {R(v) = R(Cons,l2)} => {R(v) =(R(l2) U R(l1))}
+2. R(Cons,l1) = {x} U R(Cons,xs) |- {R(v) = {x} U R(Cons,xs) U R(Cons,l2)} =>
+{R(v) = R(Cons,l1) U R(Cons,l2)}
+
+Implications are readily discharged by SMT
+
+List.reverse, BinaryTree.fromList, BinaryTree.insert can be typed in similar way
+
+Consider the lookup operation on lists -
+lookup : {l1 : int list } -> {k : int} -> {z:bool | z=true <=> {k} subsetof R(l1)}
+fun lookup l1 k = case l of [] => false
+  | x::xs => if(x=k) then true else lookup xs k
+The implications that need to be satisfied for type to hold are -
+1. R(l1) = {} |- v=false => (v=true <=> {k} subsetof R(l1))
+2. R(l1) = {x} U R(xs); x=k |- v=true => (v=true <=> {k} subsetof R(l1))
+3. R(l1) = {x} U R(xs); x<>k |- (v=true <=> {k} subsetof R(xs)) => (v=true <=> {k} subsetof R(l1))
+
+This can also be readily discharged by Solver.
+
+Now, consider the following filter function on lists -
+filter : {l1 : 'a list} -> {f : {x:'a} -> {v:bool|v=true <=> P(x)} -> {l2 : 'a
+list | R(l2) = Sig(P(#1),R(l1))}
+fun filter l1 f = case l1 of [] => []
+  | x::xs => if (f(x)) then x::(filter xs f) else filter xs f
+
+The implications for typing are
+1. R(l1) = {} |- {R(v) = {} } => {R(v) = Sig(P(#1),R(l1))}
+2. R(l1) = {x} U R(xs); P(x) |- {R(v) = {x} U Sig(P(#1),R(xs))} => 
+                                    {R(v) = Sig(P(#1),R(l1))}
+3. R(l1) = {x} U R(xs); ~P(x) |- {R(v) = Sig(P(#1),R(xs))} => 
+                                    {R(v) = Sig(P(#1),R(l1))}
+The above implications contains selection (Sigma) operator from relational
+algebra which is unsupported by Solver. So, we need certain rules to convert
+constraints in Sigma notation to plain set constraints - 
+
+    Env|- S = {}
+-------------------
+Env |- Sig(_,S) = {}
+
+Env |- S1 subseteqof S   Env|- P : 'a -> bool
+---------------------------------------------
+Env |- Sig(P(#1),S1) subseteqof Sig(P(#1),S)
+
+Env|- P : 'a -> bool    Env |- Sig(P(#1),S) = {}
+------------------------------------------------
+            Env |- Sig(~P(#1),S) = S
+
+Env |- {x} subseteqof S   Env |- Sig(P(#1),S) = S
+-------------------------------------------------
+            Env |- P(x) = true
+
+Env |- S = S1 U S2  Env|- P : 'a -> bool
+-----------------------------------------
+Env | Sig(P(#1),S) = Sig(P(#1),S1) U Sig(P(#1),S2)
+
+Env |- S = {x} U S2             Env |- P(x)=true
+------------------------------------------------
+  Env |- Sig(P(#1),S) = {x} U Sig(P(#1),S2)
+
+Env |- S = {x} U S2           Env |- P(x)=false
+-----------------------------------------------
+  Env |- Sig(P(#1),S) = Sig(P(#1),S2)
+
+Using these rules, the above set of implications can be translated to following
+plain set constraints -
+
+1. S1 = {} |- {v={}} => {v={}}
+2. S1 = {x} U S2; S' = {x} U S'' |- {v=S'} => {v=S''}
+3. S1 = {x} U S2; S' = S'' |- {v=S'} => {v=S''}
+
+Which can then be discharged readily by SMT solver. 
+
+Now consider fold (right) function over lists -
+
+fun fold (l,base,f) = case l of [] => base
+  | x::xs => f(x,fold(xs,base,f))
+
+The interesting question is, how should we type fold function in such a way as
+to make use of its specification for our analysis. Since nothing is known about
+the folding function f while defining the function fold, we assign following
+simple type to fold -
+
+fold {l : 'a list}-> {base : 'b} -> {f: 'a * 'b -> b} -> {v : 'b | g[f,base](R(Cons,l))}
+
+g is analogous to aggregation operator (like max, count etc) in relational
+algebra. The above type says that fold produces a value of type 'b such that it
+is the result of aggregating over elements in set R(Cons,l) with function f with
+base as starting value. Since we are not concerned with order of elements in
+set, there can be many possible values of type {'b | g[f,base](R(Cons,l))} for
+given values of f,base and l.
+
+sum is a typical use of fold with following uninteresting fold function -
+
+sum_f : {x:int} * {acc:int} -> {v:int | v=x+acc}
+sum_f(x,acc) = x+acc
+
+in this case, we would write the type of result of fold as {int |
+g[sum_f,0](R(Cons,l))}
+Since the result type of sum is int, the only meaningful post-condition for
+observable detertminism is that the values produced in serial and transformed
+executions should be the same. Let us see if a transformed execution that
+provides sum with a different list, but with same set of values produces the
+same result. For that to hold, following has to hold -
+
+R(l') = R(l); v = g[sum_f,0](R(l)); v' = g[sum_f,0](R(l')) |- v=v'
+
+Our hypothesis is that the above proposition holds iff
+1. sum_f is locally commutative. That is, sum_f(x1,sum_f(x2,acc)) = sum_f(x2,sum_f(x1,acc))
+2. sum_f is duplicate resistant. That is, sum_f(x,sum_f(x,acc)) = sum_f(x,acc)
+
+sum_f is locally commutative, but sum_f is not duplicate resistant as 2x+acc <>
+x+acc. However, if the list l has no duplicates (A verifiable datastructure
+invariant), 2 holds vacuosly. If that is the case, then
+
+R(v) = R(l)
+
+becomes relaxed pre-condition for fold with sum_f to exectute concurrently with another
+function.
+
+The case we considered so far is a straightforward use of fold whose
+specification also has no interesting things to say. There are few interesting cases where
+1. Functions structurally recurse over the datastructure like concat or rev do,
+but they produce a basic value meaning that they should only have a fold
+specificaion.
+2. Functions use supply auxiliary fold functions to recurse over datastructures,
+which inturn produce a new set of values. In this case, fold specification has
+to graduate to a "set of values" specification like concat.
+
+As an example for case 1, let us consider the same sum function, now written
+by directly recursing over the list -
+
+fun sum l = case l of [] => 0
+  | x::xs => x + sum(xs)
+
+Since sum produces a value of basic type that does not belong to original list,
+the only specification that can be written for result of sum is a fold
+specification - g[op +,0](R(l)). How to verify such specifications? We have two
+rules -
+
+Env |- S={}      Env |- v=base
+-------------------------------
+    Env |- v : g[f,base](S)
+
+Env |- S={x} U S1      Env |- v : g[f,base](S1)
+----------------------------------------------
+    Env |- f(x,v) : g[f,base](S)
+
+It is only by using these two rules that fold function over lists is given the
+type 
+
+fold : {l : 'a list } -> {base : 'b} -> {f: 'a*'b->'b} -> {v:'b|g[f,base](R(l))}
+
+For the example for case 2, consider the concat function written using fold by
+supplying a fold function -
+
+fun concat l1 l2 = List.foldr (l1,l2,Cons)
+
+For concat to typecheck, we need the following implication to hold -
+
+ {v : g[Cons,l2](R(l1))} |- {R(v) = R(l1) U R(l2)}
+
+ We need to use the following axiom on Cons to lift fold specification to
+ specification on set of values -
+
+ Cons : {x: 'a} * {xs : 'a list} -> {l : 'a list | R(l) = {x} U R(xs)}
+
+ the following is a rule that aids in lifting -
+
+ Env |- f: {x:'a}*{acc:'b} -> {v:'b | R(v) = rexpr}  Env|- base: 'b 
+           Env |- {v: 'b | g[f,base](S)} 
+---------------------------------------------------------------------------
+      Env |- {v : 'b | R(v) = [S/{x}][base/acc]rexpr}
+
+Let us see how the rule helps in lifting the fold spec of following
+filter_positive function
+
+fun f (x.acc) = if(x > 0) then x::acc else acc
+fun filter_positive l = List.fold(l,[],f)
+
+f: {x:int}*{acc:int list} -> {v:int list | R(v) = Sig(#1>0,{{x} U R(acc)})
+filter_positive : {l : int list} -> {v : int list | R(v) = Sig(#1>0,R(l))}
+
+from the type of f, rexpr is Sig(#1>0,{{x} U R(acc)})
+from the type of fold, we know that result of filter_positive has type
+g[f,[]](R(l))
+
+By applying the rule, we can now deduce that result of filter_positive has type
+  {v : int list | R(v) = [R(l)/{x}][[]/acc] rexpr}
+
+which reduces to 
+  {v : int list | R(v) = Sig(#1>0,R(l))}
+
+DATASTRUCTURE INVARIANTS:
+
+Most often, recursive functions over a datastructure make use of the invariants
+to recurse only over a subset of values within unfolded datastructure instead of
+entire set of values. An example is find_min function on binary search trees
+that repeatedly recurses over left tree and claims that it returns minimum of
+all set of values in the tree. Our verification procedure should be capable of
+instantiating datastructure invariants in a suitable way so as to generalize
+claims on a subset of values to entire set of values. 
+
+Consider the following example of bst find_min -
+
+fun find_min t = case t of [] => assert(false)
+  | N(E,n,rt) => n
+  | N(lt,n,rt) = find_min lt
+
+find_min : {t : int bst} -> {v : int | ({v} subseteqof R(t)) and
+Sig(#1>=v,R(t)) = R(t)}
+
+Now
+part_sum -> {v :int|g[op +,0](Sig(#1<=k,R(N,t)))}
+fun part_sum k t base = case t of E => base
+  | N (lt,n,rt) => if (n>k) then part_sum k lt base
+    else if (n=k) then Tree.fold (lt,0,op +) + n
+    else Tree.fold (lt,0,op +) + part_sum k rt base
+
+R(t) = {}; |- (v=base) => (v=base)
+R(t) = R(lt) U {n} U R(rt); n>k |- g[op+,0](R(lt)) => g[op+,0](Sig(#1<=k,R(lt)))
+R(t) = R(lt) U {n} U R(rt); n=k |- g[op+,0](R(lt)) + n => g[op+,0](Sig(#1<=k,R(t)))
+R(t) = R(lt) U {n} U R(rt); n<k |- g[op+,0](R(lt)) + n + g[op +,0]((R(rt)) => g[op+,0](Sig(#1<=k,R(t)))
